@@ -10,6 +10,7 @@ import { AuditLog } from '../models/AuditLog.js';
 import { TicketReply } from '../models/TicketReply.js';
 import { Article } from '../models/Article.js';
 import { User } from '../models/User.js';
+import { PendingTicket } from '../models/PendingTicket.js';
 import { newTraceId } from '../utils/trace.js';
 import { emitNotification } from '../services/notificationService.js';
 
@@ -33,9 +34,15 @@ agent.post('/triage', requireAuth, requireRole('admin', 'agent', 'user'), valida
   }
 });
 
-// Get agent dashboard with pending tickets and suggested replies
+// Get agent dashboard with metrics and pending tickets
 agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next) => {
   try {
+    const agentId = req.query.agentId; // Agent ID from query parameters
+    
+    if (!agentId) {
+      return res.status(400).json({ message: 'Agent ID is required' });
+    }
+
     // Get tickets that need agent attention
     const pendingTickets = await Ticket.find({
       status: { $in: ['waiting_human', 'open'] }
@@ -46,7 +53,50 @@ agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next
     .limit(20)
     .lean();
 
-    // Transform for frontend
+    // Get agent-specific metrics
+    const [
+      acceptedTicketsCount,
+      closedTicketsCount,
+      pendingTicketsForAgent,
+      agentPendingTickets
+    ] = await Promise.all([
+      // Count accepted tickets by this agent
+      PendingTicket.countDocuments({ 
+        agentId: agentId, 
+        action: 'accept',
+        status: 'accepted'
+      }),
+      
+      // Count closed tickets by this agent (from audit logs)
+      AuditLog.countDocuments({
+        'meta.agentId': agentId,
+        action: { $in: ['TICKET_RESOLVED_WITH_REPLY', 'TICKET_CLOSED'] }
+      }),
+      
+      // Count pending tickets assigned to this agent
+      PendingTicket.countDocuments({
+        agentId: agentId,
+        status: 'pending'
+      }),
+      
+      // Get detailed pending tickets for this agent
+      PendingTicket.find({
+        agentId: agentId,
+        status: 'pending'
+      })
+      .populate({
+        path: 'ticketId',
+        populate: {
+          path: 'createdBy',
+          select: 'name email'
+        }
+      })
+      .sort({ assignedAt: -1 })
+      .limit(10)
+      .lean()
+    ]);
+
+    // Transform general pending tickets for frontend
     const ticketsWithSuggestions = pendingTickets.map(ticket => {
       if (ticket.agentSuggestionId) {
         ticket.agentSuggestion = {
@@ -62,8 +112,18 @@ agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next
     });
 
     res.json({
+      // General dashboard data
       pendingTickets: ticketsWithSuggestions,
-      totalPending: ticketsWithSuggestions.length
+      totalPending: ticketsWithSuggestions.length,
+      
+      // Agent-specific metrics
+      agentMetrics: {
+        agentId: agentId,
+        acceptedTickets: acceptedTicketsCount,
+        closedTickets: closedTicketsCount,
+        pendingTickets: pendingTicketsForAgent,
+        agentPendingTickets: agentPendingTickets
+      }
     });
   } catch (e) {
     next(e);
@@ -300,6 +360,242 @@ agent.get('/kb-articles', requireAuth, requireRole('agent'), async (req, res, ne
     res.json({
       articles,
       total: articles.length
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Handle agent draft acceptance/rejection
+const agentResponseSchema = Joi.object({
+  body: Joi.object({
+    ticketId: Joi.string().hex().length(24).required(),
+    action: Joi.string().valid('accept', 'reject').required(),
+    agentId: Joi.string().required(),
+    agentName: Joi.string().required(),
+    originalReply: Joi.string().required(),
+    confidence: Joi.number().min(0).max(1).required(),
+    willSendImmediately: Joi.boolean().default(false),
+    willCloseTicket: Joi.boolean().default(false),
+    traceId: Joi.string().required()
+  })
+});
+
+agent.post('/respond-to-draft', requireAuth, requireRole('agent'), validate(agentResponseSchema), async (req, res, next) => {
+  try {
+    const { 
+      ticketId, 
+      action, 
+      agentId, 
+      agentName, 
+      originalReply, 
+      confidence, 
+      willSendImmediately, 
+      willCloseTicket, 
+      traceId 
+    } = req.body;
+
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      return res.status(404).json({ message: 'Ticket not found' });
+    }
+
+    // Create audit log entry
+    const auditLog = await AuditLog.create({
+      ticketId,
+      traceId,
+      actor: 'agent',
+      action: `AGENT_DRAFT_${action.toUpperCase()}`,
+      meta: {
+        action,
+        originalReply,
+        agentId,
+        agentName,
+        confidence,
+        willSendImmediately,
+        willCloseTicket
+      },
+      timestamp: new Date()
+    });
+
+    // Create or update pending ticket record
+    let pendingTicket = await PendingTicket.findOne({ ticketId, agentId });
+    
+    if (!pendingTicket) {
+      pendingTicket = await PendingTicket.create({
+        ticketId,
+        agentId,
+        agentName,
+        action,
+        originalReply,
+        confidence,
+        willSendImmediately,
+        willCloseTicket,
+        status: action === 'accept' ? 'accepted' : 'rejected',
+        traceId,
+        auditLogId: auditLog._id,
+        respondedAt: new Date()
+      });
+    } else {
+      pendingTicket.action = action;
+      pendingTicket.status = action === 'accept' ? 'accepted' : 'rejected';
+      pendingTicket.respondedAt = new Date();
+      pendingTicket.auditLogId = auditLog._id;
+      await pendingTicket.save();
+    }
+
+    // If accepted, assign the ticket to the agent
+    if (action === 'accept') {
+      ticket.assignee = req.user._id; // Assign to the current user (agent)
+      ticket.status = 'triaged';
+      await ticket.save();
+
+      // Send notification
+      await emitNotification({
+        userId: ticket.createdBy.toString(),
+        type: 'ticket_assigned',
+        message: `Your ticket "${ticket.title}" has been assigned to an agent.`,
+        ticketId: ticket._id.toString(),
+        metadata: {
+          traceId,
+          agentId,
+          agentName,
+          action: 'accepted'
+        }
+      });
+    } else if (action === 'reject') {
+      // If rejected, keep ticket open for reassignment
+      ticket.status = 'open';
+      await ticket.save();
+    }
+
+    res.json({
+      success: true,
+      action,
+      pendingTicket,
+      ticketStatus: ticket.status,
+      message: `Draft ${action}ed successfully`
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Get agent metrics
+const agentMetricsSchema = Joi.object({
+  params: Joi.object({
+    agentId: Joi.string().required()
+  })
+});
+
+agent.get('/metrics/:agentId', requireAuth, requireRole('agent', 'admin'), validate(agentMetricsSchema), async (req, res, next) => {
+  try {
+    const { agentId } = req.params;
+
+    const [
+      acceptedTickets,
+      rejectedTickets,
+      closedTickets,
+      pendingTickets,
+      recentActivity
+    ] = await Promise.all([
+      // Accepted tickets
+      PendingTicket.find({ 
+        agentId, 
+        action: 'accept',
+        status: 'accepted'
+      })
+      .populate('ticketId', 'title status createdAt')
+      .sort({ respondedAt: -1 })
+      .limit(10)
+      .lean(),
+
+      // Rejected tickets
+      PendingTicket.find({ 
+        agentId, 
+        action: 'reject',
+        status: 'rejected'
+      })
+      .populate('ticketId', 'title status createdAt')
+      .sort({ respondedAt: -1 })
+      .limit(10)
+      .lean(),
+
+      // Closed tickets count
+      AuditLog.countDocuments({
+        'meta.agentId': agentId,
+        action: { $in: ['TICKET_RESOLVED_WITH_REPLY', 'TICKET_CLOSED'] }
+      }),
+
+      // Pending tickets count
+      PendingTicket.countDocuments({
+        agentId,
+        status: 'pending'
+      }),
+
+      // Recent activity
+      AuditLog.find({
+        'meta.agentId': agentId
+      })
+      .sort({ timestamp: -1 })
+      .limit(20)
+      .lean()
+    ]);
+
+    res.json({
+      agentId,
+      metrics: {
+        acceptedTicketsCount: acceptedTickets.length,
+        rejectedTicketsCount: rejectedTickets.length,
+        closedTicketsCount: closedTickets,
+        pendingTicketsCount: pendingTickets,
+        totalProcessed: acceptedTickets.length + rejectedTickets.length
+      },
+      acceptedTickets,
+      rejectedTickets,
+      recentActivity
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Get all agents summary (for admin dashboard)
+agent.get('/agents-summary', requireAuth, requireRole('admin'), async (req, res, next) => {
+  try {
+    // Get all unique agent IDs from pending tickets
+    const agentIds = await PendingTicket.distinct('agentId');
+    
+    const agentsSummary = await Promise.all(
+      agentIds.map(async (agentId) => {
+        const [accepted, rejected, closed, pending] = await Promise.all([
+          PendingTicket.countDocuments({ agentId, action: 'accept', status: 'accepted' }),
+          PendingTicket.countDocuments({ agentId, action: 'reject', status: 'rejected' }),
+          AuditLog.countDocuments({
+            'meta.agentId': agentId,
+            action: { $in: ['TICKET_RESOLVED_WITH_REPLY', 'TICKET_CLOSED'] }
+          }),
+          PendingTicket.countDocuments({ agentId, status: 'pending' })
+        ]);
+
+        // Get agent name from the most recent record
+        const recentRecord = await PendingTicket.findOne({ agentId }).sort({ createdAt: -1 });
+        
+        return {
+          agentId,
+          agentName: recentRecord?.agentName || 'Unknown',
+          accepted,
+          rejected,
+          closed,
+          pending,
+          totalProcessed: accepted + rejected
+        };
+      })
+    );
+
+    res.json({
+      agents: agentsSummary,
+      totalAgents: agentsSummary.length
     });
   } catch (e) {
     next(e);

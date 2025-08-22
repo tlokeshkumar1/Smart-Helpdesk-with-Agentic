@@ -11,6 +11,7 @@ import { CreateTicket } from './pages/CreateTicket';
 import { KnowledgeBase } from './pages/KnowledgeBase';
 import { KBEditor } from './pages/KBEditor';
 import { Settings } from './pages/Settings';
+import AgentDashboard from './pages/AgentDashboard';
 import { useAuthStore } from './stores/auth';
 import './utils/apiTest'; // Import the test function to make it available on window
 
@@ -70,6 +71,15 @@ function App() {
               } 
             />
             <Route path="tickets/:id" element={<TicketDetail />} />
+            
+            <Route
+              path="agent-dashboard"
+              element={
+                <ProtectedRoute roles={['agent', 'admin']}>
+                  <AgentDashboard />
+                </ProtectedRoute>
+              }
+            />
             
             <Route path="kb" element={<KnowledgeBase />} />
             <Route
