@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Ticket, AgentSuggestion, AuditEvent } from '../types';
+import { Ticket, AgentSuggestion, AuditEvent, TicketReply } from '../types';
 import api from '../lib/api';
 
 interface TicketsState {
@@ -7,6 +7,7 @@ interface TicketsState {
   currentTicket: Ticket | null;
   agentSuggestion: AgentSuggestion | null;
   auditEvents: AuditEvent[];
+  replies: TicketReply[];
   isLoading: boolean;
   filters: {
     status?: string;
@@ -17,6 +18,7 @@ interface TicketsState {
   fetchTicket: (id: string) => Promise<void>;
   createTicket: (data: { title: string; description: string; category?: string; attachments?: string[] }) => Promise<void>;
   replyToTicket: (id: string, reply: string, close?: boolean) => Promise<void>;
+  userReplyToTicket: (id: string, reply: string, attachments?: string[]) => Promise<void>;
   reviewDraft: (id: string, action: 'accept' | 'edit' | 'reject', options?: {
     editedReply?: string;
     feedback?: string;
@@ -26,6 +28,7 @@ interface TicketsState {
   reopenTicket: (id: string, reason?: string) => Promise<void>;
   setFilters: (filters: Partial<TicketsState['filters']>) => void;
   fetchAuditEvents: (ticketId: string) => Promise<void>;
+  fetchReplies: (ticketId: string) => Promise<void>;
 }
 
 export const useTicketsStore = create<TicketsState>((set, get) => ({
@@ -33,6 +36,7 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
   currentTicket: null,
   agentSuggestion: null,
   auditEvents: [],
+  replies: [],
   isLoading: false,
   filters: {
     mine: false,
@@ -99,6 +103,13 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
     await get().fetchTicket(id);
   },
 
+  userReplyToTicket: async (id: string, reply: string, attachments?: string[]) => {
+    await api.post(`/tickets/${id}/user-reply`, { reply, attachments });
+    // Refresh the ticket and replies after user reply
+    await get().fetchTicket(id);
+    await get().fetchReplies(id);
+  },
+
   reviewDraft: async (id: string, action: 'accept' | 'edit' | 'reject', options?: {
     editedReply?: string;
     feedback?: string;
@@ -136,5 +147,10 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
   fetchAuditEvents: async (ticketId: string) => {
     const response = await api.get(`/tickets/${ticketId}/audit`);
     set({ auditEvents: response.data.timeline || [] });
+  },
+
+  fetchReplies: async (ticketId: string) => {
+    const response = await api.get(`/tickets/${ticketId}/replies`);
+    set({ replies: response.data.replies || [] });
   },
 }));

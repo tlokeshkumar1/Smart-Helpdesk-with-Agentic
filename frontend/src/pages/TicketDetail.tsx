@@ -27,10 +27,13 @@ export const TicketDetail: React.FC = () => {
     currentTicket, 
     agentSuggestion, 
     auditEvents,
+    replies,
     isLoading, 
     fetchTicket, 
     fetchAuditEvents,
+    fetchReplies,
     replyToTicket,
+    userReplyToTicket,
     reviewDraft,
     reopenTicket
   } = useTicketsStore();
@@ -45,6 +48,7 @@ export const TicketDetail: React.FC = () => {
         try {
           await fetchTicket(id);
           await fetchAuditEvents(id);
+          await fetchReplies(id);
         } catch {
           toast.error('Failed to load ticket');
           navigate('/tickets');
@@ -52,7 +56,7 @@ export const TicketDetail: React.FC = () => {
       };
       loadTicket();
     }
-  }, [id, fetchTicket, fetchAuditEvents, navigate]);
+  }, [id, fetchTicket, fetchAuditEvents, fetchReplies, navigate]);
 
   const handleReply = async (closeAfter = false) => {
     if (!id || !replyText.trim()) return;
@@ -63,6 +67,7 @@ export const TicketDetail: React.FC = () => {
       setReplyText('');
       toast.success(closeAfter ? 'Reply sent and ticket closed' : 'Reply sent');
       await fetchAuditEvents(id);
+      await fetchReplies(id);
     } catch {
       toast.error('Failed to send reply');
     } finally {
@@ -83,6 +88,22 @@ export const TicketDetail: React.FC = () => {
       await reviewDraft(id, action, options);
     } finally {
       setIsReviewing(false);
+    }
+  };
+
+  const handleUserReply = async () => {
+    if (!id || !replyText.trim()) return;
+
+    setIsReplying(true);
+    try {
+      await userReplyToTicket(id, replyText);
+      setReplyText('');
+      toast.success('Reply sent successfully');
+      await fetchAuditEvents(id);
+    } catch {
+      toast.error('Failed to send reply');
+    } finally {
+      setIsReplying(false);
     }
   };
 
@@ -113,6 +134,10 @@ export const TicketDetail: React.FC = () => {
 
   const canReply = user?.role === 'agent' && 
     ['triaged', 'assigned', 'waiting_human'].includes(currentTicket.status);
+
+  const canUserReply = user?.role === 'user' && 
+    currentTicket.userId === user._id &&
+    !['closed'].includes(currentTicket.status);
 
   return (
     <div className="space-y-6">
@@ -202,6 +227,105 @@ export const TicketDetail: React.FC = () => {
         />
       )}
 
+      {/* Conversation Section */}
+      {replies.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Conversation</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {replies.map((reply) => {
+                const isCurrentUser = reply.author?._id === user?._id;
+                return (
+                  <div 
+                    key={reply._id} 
+                    className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div 
+                      className={`max-w-[70%] p-4 rounded-lg ${
+                        isCurrentUser
+                          ? 'bg-blue-500 text-white' 
+                          : 'bg-gray-100 text-gray-900'
+                      }`}
+                    >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium">
+                        {reply.author?._id === user?._id 
+                          ? 'You' 
+                          : reply.authorType === 'agent' 
+                            ? `Agent${reply.author?.name ? ` (${reply.author.name})` : ''}` 
+                            : reply.authorType === 'user' 
+                              ? `User${reply.author?.name ? ` (${reply.author.name})` : ''}` 
+                              : 'System'
+                        }
+                      </span>
+                      <span className={`text-xs ${isCurrentUser ? 'text-blue-100' : 'text-gray-500'}`}>
+                        {new Date(reply.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="whitespace-pre-wrap">{reply.content}</p>
+                    {reply.attachments && reply.attachments.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {reply.attachments.map((url, index) => (
+                          <a 
+                            key={index}
+                            href={url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className={`block text-sm underline ${
+                              isCurrentUser ? 'text-blue-100' : 'text-blue-600'
+                            }`}
+                          >
+                            Attachment {index + 1}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {reply.citations && reply.citations.length > 0 && (
+                      <div className="mt-2">
+                        <span className={`text-xs ${isCurrentUser ? 'text-blue-100' : 'text-gray-500'}`}>
+                          Referenced: {reply.citations.join(', ')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* User Reply Form */}
+      {canUserReply && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Reply to Ticket</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="Type your reply here..."
+                className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex space-x-2">
+                <Button
+                  onClick={handleUserReply}
+                  isLoading={isReplying}
+                  disabled={!replyText.trim()}
+                >
+                  Send Reply
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Reopen Button for Closed Tickets */}
       {user?.role === 'agent' && currentTicket.status === 'closed' && (
         <Card>
@@ -253,6 +377,34 @@ export const TicketDetail: React.FC = () => {
                   disabled={!replyText.trim()}
                 >
                   Send & Close
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* User Reply Form */}
+      {canUserReply && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Reply to Ticket</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="Type your reply here..."
+                className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex space-x-2">
+                <Button
+                  onClick={handleUserReply}
+                  isLoading={isReplying}
+                  disabled={!replyText.trim()}
+                >
+                  Send Reply
                 </Button>
               </div>
             </div>

@@ -34,6 +34,23 @@ export interface AuditEvent {
   traceId: string;
 }
 
+export interface TicketReply {
+  _id: string;
+  content: string;
+  author?: {
+    _id: string;
+    name?: string;
+    email: string;
+    role: string;
+  };
+  authorType: 'user' | 'agent' | 'system';
+  isInternal: boolean;
+  attachments?: string[];
+  citations?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface KBArticle {
   _id: string;
   title: string;

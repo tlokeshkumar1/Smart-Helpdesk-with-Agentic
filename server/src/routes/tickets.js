@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate.js';
 import { Ticket } from '../models/Ticket.js';
 import { AgentSuggestion } from '../models/AgentSuggestion.js';
 import { AuditLog } from '../models/AuditLog.js';
+import { TicketReply } from '../models/TicketReply.js';
 import { User } from '../models/User.js';
 import { newTraceId } from '../utils/trace.js';
 import { triageTicket } from '../services/agentService.js';
@@ -209,6 +210,8 @@ function generateEventDescription(event) {
       return `Agent ${meta.agentName} resolved ticket with reply`;
     case 'AGENT_REPLY_SENT':
       return `Agent ${meta.agentName} sent reply`;
+    case 'USER_REPLY_SENT':
+      return `User ${meta.userName} replied to ticket`;
     case 'ASSIGNED':
       return `Ticket assigned to agent`;
     case 'TICKET_REOPENED':
@@ -282,13 +285,17 @@ tickets.post('/:id/reply', requireAuth, requireRole('agent'), validate(replySche
     if (!ticket) return res.status(404).json({ message: 'Not found' });
     
     const traceId = newTraceId();
-    await AuditLog.create({ 
-      ticketId: ticket._id, 
-      traceId, 
-      actor: 'agent', 
-      action: 'REPLY_SENT', 
-      meta: { reply: req.body.reply }, 
-      timestamp: new Date() 
+    
+    // Create TicketReply instead of audit log for REPLY_SENT
+    const reply = await TicketReply.create({
+      ticketId: ticket._id,
+      content: req.body.reply,
+      author: req.user._id,
+      authorType: 'agent',
+      isInternal: false,
+      citations: [],
+      agentSuggestionId: null,
+      traceId: traceId
     });
     
     const newStatus = req.body.close ? 'closed' : 'waiting_human';
@@ -317,6 +324,93 @@ tickets.post('/:id/reply', requireAuth, requireRole('agent'), validate(replySche
     });
 
     res.json(ticket);
+  } catch (e) { 
+    next(e); 
+  }
+});
+
+// User reply endpoint
+const userReplySchema = Joi.object({
+  params: Joi.object({ 
+    id: Joi.string().hex().length(24).required() 
+  }),
+  body: Joi.object({ 
+    reply: Joi.string().min(1).required(),
+    attachments: Joi.array().items(Joi.string()).optional()
+  })
+});
+
+tickets.post('/:id/user-reply', requireAuth, requireRole('user'), validate(userReplySchema), async (req, res, next) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id).populate('createdBy');
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
+    
+    // Only ticket creator can reply
+    if (ticket.createdBy._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'You can only reply to your own tickets' });
+    }
+    
+    // Only allow replies if ticket is not closed
+    if (ticket.status === 'closed') {
+      return res.status(400).json({ message: 'Cannot reply to closed tickets' });
+    }
+    
+    const traceId = newTraceId();
+    
+    // Create user reply
+    const reply = await TicketReply.create({
+      ticketId: ticket._id,
+      content: req.body.reply,
+      author: req.user._id,
+      authorType: 'user',
+      isInternal: false,
+      attachments: req.body.attachments || [],
+      traceId: traceId
+    });
+    
+    // Update ticket status to indicate user response
+    const oldStatus = ticket.status;
+    if (ticket.status === 'resolved') {
+      ticket.status = 'open'; // Reopen if was resolved
+    } else if (ticket.status === 'waiting_human') {
+      ticket.status = 'triaged'; // Move back to triaged for agent attention
+    }
+    await ticket.save();
+
+    // Log the user reply action
+    await AuditLog.create({ 
+      ticketId: ticket._id, 
+      traceId, 
+      actor: 'user', 
+      action: 'USER_REPLY_SENT', 
+      meta: { 
+        userId: req.user._id,
+        userName: req.user.name,
+        replyId: String(reply._id),
+        hasAttachments: (req.body.attachments || []).length > 0,
+        oldStatus,
+        newStatus: ticket.status
+      }, 
+      timestamp: new Date() 
+    });
+
+    // Send notification to assigned agent or all agents if unassigned
+    if (ticket.assignee) {
+      await emitNotification({
+        userId: ticket.assignee.toString(),
+        type: 'user_replied',
+        message: `User replied to ticket "${ticket.title}"`,
+        ticketId: ticket._id.toString(),
+        metadata: { 
+          traceId, 
+          userId: req.user._id.toString(),
+          oldStatus,
+          newStatus: ticket.status
+        }
+      });
+    }
+
+    res.json({ ticket, reply, traceId });
   } catch (e) { 
     next(e); 
   }
@@ -455,7 +549,8 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         authorType: 'agent',
         isInternal: false,
         citations: ticket.agentSuggestionId.articleIds || [],
-        agentSuggestionId: ticket.agentSuggestionId._id
+        agentSuggestionId: ticket.agentSuggestionId._id,
+        traceId: traceId
       });
 
       const newStatus = closeTicket ? 'resolved' : 'open';
@@ -463,24 +558,26 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
       ticket.status = newStatus;
       await ticket.save();
 
-      await AuditLog.create({ 
-        ticketId: ticket._id, 
-        traceId, 
-        actor: 'agent', 
-        action: closeTicket ? 'TICKET_RESOLVED_WITH_REPLY' : 'AGENT_REPLY_SENT', 
-        meta: { 
-          replyId: String(reply._id),
-          reply: finalReply,
-          reviewAction: action,
-          closed: closeTicket,
-          agentId: req.user._id,
-          agentName: req.user.name,
-          oldStatus,
-          newStatus,
-          citations: ticket.agentSuggestionId.articleIds?.length || 0
-        }, 
-        timestamp: new Date() 
-      });
+      // Only create audit log for status change, not for reply sent
+      if (closeTicket) {
+        await AuditLog.create({ 
+          ticketId: ticket._id, 
+          traceId, 
+          actor: 'agent', 
+          action: 'TICKET_RESOLVED_WITH_REPLY', 
+          meta: { 
+            replyId: String(reply._id),
+            reviewAction: action,
+            closed: closeTicket,
+            agentId: req.user._id,
+            agentName: req.user.name,
+            oldStatus,
+            newStatus,
+            citations: ticket.agentSuggestionId.articleIds?.length || 0
+          }, 
+          timestamp: new Date() 
+        });
+      }
 
       // Send notification to ticket creator
       const notificationType = closeTicket ? 'ticket_resolved' : 'ticket_replied';

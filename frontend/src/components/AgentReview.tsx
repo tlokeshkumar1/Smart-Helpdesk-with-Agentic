@@ -38,7 +38,7 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
       });
       toast.success(sendImmediately ? 'Draft accepted and sent!' : 'Draft accepted');
       resetForm();
-    } catch (error) {
+    } catch {
       toast.error('Failed to accept draft');
     }
   };
@@ -59,7 +59,7 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
       toast.success(sendImmediately ? 'Draft edited and sent!' : 'Draft edited');
       resetForm();
       setIsEditing(false);
-    } catch (error) {
+    } catch {
       toast.error('Failed to edit draft');
     }
   };
@@ -71,7 +71,7 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
       });
       toast.success('Draft rejected');
       resetForm();
-    } catch (error) {
+    } catch {
       toast.error('Failed to reject draft');
     }
   };
@@ -147,13 +147,13 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
         </div>
 
         {/* Knowledge Base Citations */}
-        {agentSuggestion.articleIds && agentSuggestion.articleIds.length > 0 && (
+        {agentSuggestion.kbCitations && agentSuggestion.kbCitations.length > 0 && (
           <div>
             <h5 className="text-sm font-medium text-gray-700 mb-2">Knowledge Base Citations:</h5>
             <div className="flex flex-wrap gap-2">
-              {agentSuggestion.articleIds.map((articleId, index) => (
+              {agentSuggestion.kbCitations.map((citation: string, index: number) => (
                 <Badge key={index} variant="default">
-                  Article {articleId}
+                  {citation}
                 </Badge>
               ))}
             </div>
