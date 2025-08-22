@@ -26,6 +26,7 @@ interface TicketsState {
     closeTicket?: boolean;
   }) => Promise<unknown>;
   reopenTicket: (id: string, reason?: string) => Promise<void>;
+  closeTicket: (id: string, reason?: string) => Promise<void>;
   setFilters: (filters: Partial<TicketsState['filters']>) => void;
   fetchAuditEvents: (ticketId: string) => Promise<void>;
   fetchReplies: (ticketId: string) => Promise<void>;
@@ -134,6 +135,13 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
   reopenTicket: async (id: string, reason?: string) => {
     await api.post(`/tickets/${id}/reopen`, { reason });
     // Refresh the ticket after reopening
+    await get().fetchTicket(id);
+    await get().fetchAuditEvents(id);
+  },
+
+  closeTicket: async (id: string, reason?: string) => {
+    await api.post(`/tickets/${id}/close`, { reason });
+    // Refresh the ticket after closing
     await get().fetchTicket(id);
     await get().fetchAuditEvents(id);
   },
