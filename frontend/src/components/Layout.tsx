@@ -6,7 +6,8 @@ import {
   BookOpen, 
   Settings, 
   LogOut,
-  User
+  User,
+  BarChart3
 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { NotificationBell } from './ui/NotificationBell';
@@ -25,6 +26,12 @@ export const Layout: React.FC = () => {
       href: '/tickets',
       icon: Ticket,
       show: true,
+    },
+    {
+      name: 'Agent Dashboard',
+      href: '/agent-dashboard',
+      icon: BarChart3,
+      show: user.role === 'agent',
     },
     {
       name: 'Knowledge Base',
