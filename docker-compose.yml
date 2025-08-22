@@ -1,0 +1,26 @@
+version: "3.9"
+services:
+  api:
+    build: ./server
+    environment:
+      - PORT=8080
+      - MONGO_URI=mongodb+srv://root:root@cluster0.fpw8cqa.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
+      - JWT_SECRET=change-me
+      - REFRESH_SECRET=change-me-too
+      - AUTO_CLOSE_ENABLED=true
+      - CONFIDENCE_THRESHOLD=0.78
+      - SLA_HOURS=24
+      - AGENT_BASE_URL=http://agent:9000
+      - AGENT_TIMEOUT_MS=8000
+      - AGENT_RETRY=1
+      - NODE_ENV=production
+      - CORS_ORIGIN=http://localhost:5173
+    depends_on: [agent]
+    ports: ["8080:8080"]
+
+  agent:
+    build: ./agent
+    environment:
+      - STUB_MODE=true
+      - GEMINI_MODEL=gemini-2.0-flash
+    ports: ["9000:9000"]
