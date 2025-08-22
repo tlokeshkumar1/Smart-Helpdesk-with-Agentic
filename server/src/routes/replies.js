@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { TicketReply } from '../models/TicketReply.js';
 import { Ticket } from '../models/Ticket.js';
+import { newTraceId } from '../utils/trace.js';
 
 export const replies = Router();
 
@@ -90,6 +91,7 @@ replies.post('/', requireAuth, validate(createReplySchema), async (req, res, nex
     }
     
     // Create the reply
+    const traceId = newTraceId();
     const reply = await TicketReply.create({
       ticketId,
       content,
@@ -97,7 +99,8 @@ replies.post('/', requireAuth, validate(createReplySchema), async (req, res, nex
       authorType: 'user',
       isInternal,
       attachments,
-      citations: []
+      citations: [],
+      traceId
     });
     
     // Update ticket status if it was resolved and customer replies
