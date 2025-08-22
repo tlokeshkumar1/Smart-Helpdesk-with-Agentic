@@ -22,7 +22,7 @@ interface TicketsState {
     feedback?: string;
     sendImmediately?: boolean;
     closeTicket?: boolean;
-  }) => Promise<any>;
+  }) => Promise<unknown>;
   reopenTicket: (id: string, reason?: string) => Promise<void>;
   setFilters: (filters: Partial<TicketsState['filters']>) => void;
   fetchAuditEvents: (ticketId: string) => Promise<void>;
@@ -94,13 +94,9 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
   },
 
   replyToTicket: async (id: string, reply: string, close = false) => {
-    try {
-      await api.post(`/tickets/${id}/reply`, { reply, close });
-      // Refresh the ticket after reply
-      await get().fetchTicket(id);
-    } catch (error) {
-      throw error;
-    }
+    await api.post(`/tickets/${id}/reply`, { reply, close });
+    // Refresh the ticket after reply
+    await get().fetchTicket(id);
   },
 
   reviewDraft: async (id: string, action: 'accept' | 'edit' | 'reject', options?: {
@@ -109,34 +105,26 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
     sendImmediately?: boolean;
     closeTicket?: boolean;
   }) => {
-    try {
-      const response = await api.post(`/tickets/${id}/review-draft`, {
-        action,
-        editedReply: options?.editedReply,
-        feedback: options?.feedback,
-        sendImmediately: options?.sendImmediately || false,
-        closeTicket: options?.closeTicket || false
-      });
-      
-      // Refresh the ticket after review
-      await get().fetchTicket(id);
-      await get().fetchAuditEvents(id);
-      
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
+    const response = await api.post(`/tickets/${id}/review-draft`, {
+      action,
+      editedReply: options?.editedReply,
+      feedback: options?.feedback,
+      sendImmediately: options?.sendImmediately || false,
+      closeTicket: options?.closeTicket || false
+    });
+
+    // Refresh the ticket after review
+    await get().fetchTicket(id);
+    await get().fetchAuditEvents(id);
+
+    return response.data;
   },
 
   reopenTicket: async (id: string, reason?: string) => {
-    try {
-      await api.post(`/tickets/${id}/reopen`, { reason });
-      // Refresh the ticket after reopening
-      await get().fetchTicket(id);
-      await get().fetchAuditEvents(id);
-    } catch (error) {
-      throw error;
-    }
+    await api.post(`/tickets/${id}/reopen`, { reason });
+    // Refresh the ticket after reopening
+    await get().fetchTicket(id);
+    await get().fetchAuditEvents(id);
   },
 
   setFilters: (newFilters) => {
@@ -146,11 +134,7 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
   },
 
   fetchAuditEvents: async (ticketId: string) => {
-    try {
-      const response = await api.get(`/tickets/${ticketId}/audit`);
-      set({ auditEvents: response.data.timeline || [] });
-    } catch (error) {
-      throw error;
-    }
+    const response = await api.get(`/tickets/${ticketId}/audit`);
+    set({ auditEvents: response.data.timeline || [] });
   },
 }));

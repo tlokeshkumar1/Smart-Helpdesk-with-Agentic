@@ -24,6 +24,10 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
   if (!isOpen) return null;
 
   const handleNotificationClick = async (notificationId: string, read: boolean) => {
+    if (!notificationId) {
+      console.error('Notification ID is undefined');
+      return;
+    }
     if (!read) {
       await markAsRead(notificationId);
     }
@@ -106,9 +110,9 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
-            {notifications.map((notification) => (
+            {notifications.filter(n => n._id).map((notification, index) => (
               <div
-                key={notification._id}
+                key={notification._id || `notification-${index}`}
                 className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
                   !notification.read ? 'bg-blue-50' : ''
                 }`}

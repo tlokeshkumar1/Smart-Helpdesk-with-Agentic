@@ -5,7 +5,7 @@ function transformArticle(doc) {
   if (!doc) return null;
   const article = doc.toObject ? doc.toObject() : doc;
   return {
-    id: article._id.toString(),
+    _id: article._id.toString(),
     title: article.title,
     body: article.body,
     tags: article.tags || [],
@@ -15,14 +15,13 @@ function transformArticle(doc) {
   };
 }
 
-export async function searchKB(query) {
+export async function searchKB(query, showAll = false) {
   let docs;
   
   if (!query) {
-    // Return most recent published articles when no query provided
-    docs = await Article.find({ 
-      status: { $in: ['publish', 'published'] } 
-    })
+    // Return articles based on showAll parameter
+    const statusFilter = showAll ? {} : { status: { $in: ['publish', 'published'] } };
+    docs = await Article.find(statusFilter)
       .sort({ updatedAt: -1 })
       .limit(20)
       .lean();
@@ -34,10 +33,11 @@ export async function searchKB(query) {
     const regexTerms = searchTerms.map(term => new RegExp(term, 'i'));
     
     // Build aggregation pipeline for better relevance scoring
+    const statusFilter = showAll ? {} : { status: { $in: ['publish', 'published'] } };
     const pipeline = [
       {
         $match: {
-          status: { $in: ['publish', 'published'] },
+          ...statusFilter,
           $or: [
             { title: { $regex: q, $options: 'i' } },
             { body: { $regex: q, $options: 'i' } },

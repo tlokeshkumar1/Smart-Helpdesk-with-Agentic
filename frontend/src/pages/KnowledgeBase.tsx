@@ -81,6 +81,8 @@ export const KnowledgeBase: React.FC = () => {
     
     try {
       await toggleArticleStatus(id);
+      // Refresh articles to ensure UI stays updated
+      await fetchArticles(searchQuery);
       toast.success(`Article ${action}ed successfully`);
     } catch (error: unknown) {
       console.error('Error toggling article status:', error);

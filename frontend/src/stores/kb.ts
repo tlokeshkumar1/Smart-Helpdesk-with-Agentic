@@ -10,7 +10,7 @@ interface KBState {
   
   fetchArticles: (query?: string) => Promise<void>;
   fetchArticle: (id: string) => Promise<void>;
-  createArticle: (data: Omit<KBArticle, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  createArticle: (data: Omit<KBArticle, '_id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   updateArticle: (id: string, data: Partial<KBArticle>) => Promise<void>;
   deleteArticle: (id: string) => Promise<void>;
   toggleArticleStatus: (id: string) => Promise<void>;

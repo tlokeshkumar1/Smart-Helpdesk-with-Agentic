@@ -50,6 +50,11 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   },
 
   markAsRead: async (notificationId: string) => {
+    if (!notificationId || notificationId === 'undefined') {
+      console.error('Invalid notification ID:', notificationId);
+      return;
+    }
+    
     try {
       await api.put(`/notifications/${notificationId}/read`);
       

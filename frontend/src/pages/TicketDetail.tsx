@@ -45,7 +45,7 @@ export const TicketDetail: React.FC = () => {
         try {
           await fetchTicket(id);
           await fetchAuditEvents(id);
-        } catch (error) {
+        } catch {
           toast.error('Failed to load ticket');
           navigate('/tickets');
         }
@@ -194,7 +194,7 @@ export const TicketDetail: React.FC = () => {
       </Card>
 
       {/* Agent Suggestion */}
-      {agentSuggestion && user?.role !== 'user' && (
+      {agentSuggestion && user?.role !== 'user' && currentTicket.status === 'waiting_human' && (
         <AgentReview
           agentSuggestion={agentSuggestion}
           onReview={handleReviewDraft}
@@ -270,8 +270,8 @@ export const TicketDetail: React.FC = () => {
             <p className="text-gray-500">No audit events found</p>
           ) : (
             <div className="space-y-4">
-              {auditEvents.map((event) => (
-                <div key={event._id} className="flex space-x-4 pb-4 border-b border-gray-100 last:border-b-0">
+              {auditEvents.map((event, index) => (
+                <div key={event._id || `audit-event-${index}`} className="flex space-x-4 pb-4 border-b border-gray-100 last:border-b-0">
                   <div className="flex-shrink-0 w-2 h-2 bg-blue-400 rounded-full mt-2" />
                   <div className="flex-grow">
                     <div className="flex items-center justify-between">

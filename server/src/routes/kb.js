@@ -32,7 +32,8 @@ const idSchema = Joi.object({
 kb.get('/', requireAuth, async (req, res, next) => {
   try {
     const q = req.query.query || '';
-    const items = await searchKB(q);
+    const showAll = req.user.role === 'admin'; // Show all articles for admin users
+    const items = await searchKB(q, showAll);
     res.json(items);
   } catch (e) { 
     next(e); 
@@ -109,7 +110,8 @@ kb.patch('/:id/toggle-status', requireAuth, requireRole('admin'), validate(idSch
     const article = await Article.findById(req.params.id);
     if (!article) return res.status(404).json({ message: 'Article not found' });
     
-    const newStatus = article.status === 'publish' || article.status === 'published' ? 'unpublish' : 'published';
+    // Toggle between 'publish' and 'unpublish' (ignore 'published' for simplicity)
+    const newStatus = article.status === 'publish' || article.status === 'published' ? 'unpublish' : 'publish';
     const doc = await Article.findByIdAndUpdate(
       req.params.id, 
       { status: newStatus, updatedAt: new Date() }, 
