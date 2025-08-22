@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge';
 import { LoadingSkeleton } from '../components/ui/LoadingSkeleton';
 import { AgentReview } from '../components/AgentReview';
-import { ArrowLeft, Clock, User, Tag, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Clock, User, Tag, RotateCcw, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const statusColors = {
@@ -35,12 +35,14 @@ export const TicketDetail: React.FC = () => {
     replyToTicket,
     userReplyToTicket,
     reviewDraft,
-    reopenTicket
+    reopenTicket,
+    closeTicket
   } = useTicketsStore();
 
   const [replyText, setReplyText] = useState('');
   const [isReplying, setIsReplying] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
+  const [showAuditLogs, setShowAuditLogs] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -120,6 +122,20 @@ export const TicketDetail: React.FC = () => {
     }
   };
 
+  const handleCloseTicket = async () => {
+    if (!id) return;
+    
+    const confirmClose = window.confirm('Are you sure you want to close this ticket? This action cannot be undone.');
+    if (!confirmClose) return;
+
+    try {
+      await closeTicket(id);
+      toast.success('Ticket closed successfully');
+    } catch {
+      toast.error('Failed to close ticket');
+    }
+  };
+
   if (isLoading || !currentTicket) {
     return (
       <div className="space-y-6">
@@ -133,7 +149,7 @@ export const TicketDetail: React.FC = () => {
   }
 
   const canReply = user?.role === 'agent' && 
-    ['triaged', 'assigned', 'waiting_human'].includes(currentTicket.status);
+    ['triaged', 'assigned', 'waiting_human', 'resolved'].includes(currentTicket.status);
 
   const canUserReply = user?.role === 'user' && 
     currentTicket.userId === user._id &&
@@ -261,7 +277,7 @@ export const TicketDetail: React.FC = () => {
       </Card>
 
       {/* Agent Suggestion - For agents (with actions) and admins (read-only) */}
-      {agentSuggestion && user?.role === 'agent' && currentTicket.status === 'waiting_human' && (
+      {agentSuggestion && user?.role === 'agent' && ['waiting_human', 'resolved'].includes(currentTicket.status) && (
         <AgentReview
           agentSuggestion={agentSuggestion}
           onReview={handleReviewDraft}
@@ -309,6 +325,44 @@ export const TicketDetail: React.FC = () => {
         </Card>
       )}
 
+      {/* Resolved Ticket Actions */}
+      {user?.role === 'agent' && currentTicket.status === 'resolved' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Resolved Ticket Actions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                This ticket has been resolved. Choose an action:
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={handleCloseTicket}
+                  variant="primary"
+                  className="flex items-center gap-2"
+                >
+                  <Check className="h-4 w-4" />
+                  Close Ticket
+                </Button>
+                <Button
+                  onClick={handleReopenTicket}
+                  variant="secondary"
+                  className="flex items-center gap-2"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reopen for Review
+                </Button>
+              </div>
+              <p className="text-xs text-gray-500">
+                • <strong>Close Ticket:</strong> Mark as fully resolved and close to new replies<br/>
+                • <strong>Reopen for Review:</strong> Return to active status for further work
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Conversation Section */}
       {replies.length > 0 && (
         <Card>
@@ -317,11 +371,11 @@ export const TicketDetail: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {replies.map((reply) => {
+              {replies.map((reply, replyIndex) => {
                 const isCurrentUser = reply.author?._id === user?._id;
                 return (
                   <div 
-                    key={reply._id} 
+                    key={reply._id || `reply-${replyIndex}`} 
                     className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
                   >
                     <div 
@@ -351,7 +405,7 @@ export const TicketDetail: React.FC = () => {
                       <div className="mt-2 space-y-1">
                         {reply.attachments.map((url, index) => (
                           <a 
-                            key={index}
+                            key={`${reply._id || `reply-${replyIndex}`}-attachment-${index}`}
                             href={url} 
                             target="_blank" 
                             rel="noopener noreferrer"
@@ -367,7 +421,11 @@ export const TicketDetail: React.FC = () => {
                     {reply.citations && reply.citations.length > 0 && (
                       <div className="mt-2">
                         <span className={`text-xs ${isCurrentUser ? 'text-blue-100' : 'text-gray-500'}`}>
-                          Referenced: {reply.citations.join(', ')}
+                          Referenced: {reply.citations.map((citation, citationIndex) => (
+                            <span key={`${reply._id || `reply-${replyIndex}`}-citation-${citationIndex}`}>
+                              {citationIndex > 0 && ', '}{citation}
+                            </span>
+                          ))}
                         </span>
                       </div>
                     )}
@@ -466,69 +524,71 @@ export const TicketDetail: React.FC = () => {
         </Card>
       )}
 
-      {/* User Reply Form */}
-      {canUserReply && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Reply to Ticket</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <textarea
-                value={replyText}
-                onChange={(e) => setReplyText(e.target.value)}
-                placeholder="Type your reply here..."
-                className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <div className="flex space-x-2">
-                <Button
-                  onClick={handleUserReply}
-                  isLoading={isReplying}
-                  disabled={!replyText.trim()}
-                >
-                  Send Reply
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Audit Timeline */}
       <Card>
         <CardHeader>
-          <CardTitle>Audit Timeline</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {auditEvents.length === 0 ? (
-            <p className="text-gray-500">No audit events found</p>
-          ) : (
-            <div className="space-y-4">
-              {auditEvents.map((event, index) => (
-                <div key={event._id || `audit-event-${index}`} className="flex space-x-4 pb-4 border-b border-gray-100 last:border-b-0">
-                  <div className="flex-shrink-0 w-2 h-2 bg-blue-400 rounded-full mt-2" />
-                  <div className="flex-grow">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-gray-900">{event.action}</p>
-                      <time className="text-xs text-gray-500">
-                        {new Date(event.timestamp).toLocaleString()}
-                      </time>
-                    </div>
-                    <p className="text-sm text-gray-600">by {event.actor}</p>
-                    <p className="text-xs text-gray-500 font-mono mt-1">
-                      Trace ID: {event.traceId}
-                    </p>
-                    {event.meta && Object.keys(event.meta).length > 0 && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        {JSON.stringify(event.meta, null, 2)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+          <div className="flex items-center justify-between">
+            <CardTitle>Audit Timeline</CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAuditLogs(!showAuditLogs)}
+              className="flex items-center gap-2"
+            >
+              {showAuditLogs ? (
+                <>
+                  <ChevronUp className="h-4 w-4" />
+                  Hide Details
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="h-4 w-4" />
+                  Show Details ({auditEvents.length} events)
+                </>
+              )}
+            </Button>
+          </div>
+          {!showAuditLogs && auditEvents.length > 0 && (
+            <div className="mt-2 text-sm text-gray-600">
+              Latest: {auditEvents[0]?.action} by {auditEvents[0]?.actor} at {new Date(auditEvents[0]?.timestamp).toLocaleString()}
             </div>
           )}
-        </CardContent>
+        </CardHeader>
+        {showAuditLogs && (
+          <CardContent>
+            {auditEvents.length === 0 ? (
+              <p className="text-gray-500">No audit events found</p>
+            ) : (
+              <div className="space-y-4">
+                {auditEvents.map((event, index) => (
+                  <div key={event._id || `audit-event-${index}`} className="flex space-x-4 pb-4 border-b border-gray-100 last:border-b-0">
+                    <div className="flex-shrink-0 w-2 h-2 bg-blue-400 rounded-full mt-2" />
+                    <div className="flex-grow">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-gray-900">{event.action}</p>
+                        <time className="text-xs text-gray-500">
+                          {new Date(event.timestamp).toLocaleString()}
+                        </time>
+                      </div>
+                      <p className="text-sm text-gray-600">by {event.actor}</p>
+                      <p className="text-xs text-gray-500 font-mono mt-1">
+                        Trace ID: {event.traceId}
+                      </p>
+                      {event.meta && Object.keys(event.meta).length > 0 && (
+                        <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                          <details>
+                            <summary className="cursor-pointer font-medium">View Metadata</summary>
+                            <pre className="mt-2 whitespace-pre-wrap">{JSON.stringify(event.meta, null, 2)}</pre>
+                          </details>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        )}
       </Card>
     </div>
   );

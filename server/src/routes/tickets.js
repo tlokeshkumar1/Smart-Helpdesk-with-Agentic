@@ -208,6 +208,8 @@ function generateEventDescription(event) {
       return `Agent ${meta.agentName} rejected AI draft reply`;
     case 'TICKET_RESOLVED_WITH_REPLY':
       return `Agent ${meta.agentName} resolved ticket with reply`;
+    case 'TICKET_CLOSED':
+      return `Agent ${meta.agentName} closed ticket`;
     case 'AGENT_REPLY_SENT':
       return `Agent ${meta.agentName} sent reply`;
     case 'USER_REPLY_SENT':
@@ -275,7 +277,7 @@ const replySchema = Joi.object({
     id: Joi.string().hex().length(24).required() 
   }),
   body: Joi.object({ 
-    reply: Joi.string().min(1).required(), 
+    reply: Joi.string().allow('').required(), 
     close: Joi.boolean().default(false) 
   })
 });
@@ -287,22 +289,51 @@ tickets.post('/:id/reply', requireAuth, requireRole('agent'), validate(replySche
     
     const traceId = newTraceId();
     
-    // Create TicketReply instead of audit log for REPLY_SENT
-    const reply = await TicketReply.create({
-      ticketId: ticket._id,
-      content: req.body.reply,
-      author: req.user._id,
-      authorType: 'agent',
-      isInternal: false,
-      citations: [],
-      agentSuggestionId: null,
-      traceId: traceId
-    });
+    // Only create a reply if there's actual content
+    let reply = null;
+    if (req.body.reply.trim()) {
+      reply = await TicketReply.create({
+        ticketId: ticket._id,
+        content: req.body.reply,
+        author: req.user._id,
+        authorType: 'agent',
+        isInternal: false,
+        citations: [],
+        agentSuggestionId: null,
+        traceId: traceId
+      });
+    }
     
     const newStatus = req.body.close ? 'closed' : 'waiting_human';
     const oldStatus = ticket.status;
     ticket.status = newStatus;
     await ticket.save();
+
+    // Log the appropriate action based on whether there was a reply and if closing
+    let actionType = '';
+    if (req.body.close && req.body.reply.trim()) {
+      actionType = 'TICKET_RESOLVED_WITH_REPLY';
+    } else if (req.body.close) {
+      actionType = 'TICKET_CLOSED';
+    } else {
+      actionType = 'AGENT_REPLY_SENT';
+    }
+
+    await AuditLog.create({ 
+      ticketId: ticket._id, 
+      traceId, 
+      actor: 'agent', 
+      action: actionType, 
+      meta: { 
+        agentId: req.user._id,
+        agentName: req.user.name,
+        oldStatus,
+        newStatus,
+        hasReply: !!req.body.reply.trim(),
+        replyLength: req.body.reply.trim().length
+      }, 
+      timestamp: new Date() 
+    });
 
     // Send notification to ticket creator about the reply/status change
     const notificationType = req.body.close ? 'ticket_closed' : 'ticket_replied';
@@ -320,7 +351,7 @@ tickets.post('/:id/reply', requireAuth, requireRole('agent'), validate(replySche
         agentId: req.user._id.toString(),
         oldStatus,
         newStatus,
-        hasReply: true
+        hasReply: !!req.body.reply.trim()
       }
     });
 
@@ -499,7 +530,7 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
     const ticket = await Ticket.findById(req.params.id).populate('agentSuggestionId createdBy');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
     if (!ticket.agentSuggestionId) return res.status(400).json({ message: 'No agent suggestion found for this ticket' });
-    if (ticket.status !== 'waiting_human') return res.status(400).json({ message: 'Ticket is not in waiting_human status' });
+    if (!['waiting_human', 'resolved'].includes(ticket.status)) return res.status(400).json({ message: 'Ticket is not in a status that allows draft review' });
 
     const traceId = newTraceId();
     const { action, editedReply, feedback, sendImmediately, closeTicket } = req.body;
@@ -677,6 +708,62 @@ tickets.post('/:id/reopen', requireAuth, requireRole('agent'), validate(reopenSc
         reason: req.body.reason,
         oldStatus,
         newStatus: 'waiting_human'
+      }
+    });
+
+    res.json({ ticket, traceId });
+  } catch (e) { 
+    next(e); 
+  }
+});
+
+const closeSchema = Joi.object({
+  params: Joi.object({ 
+    id: Joi.string().hex().length(24).required() 
+  }),
+  body: Joi.object({ 
+    reason: Joi.string().optional()
+  })
+});
+
+tickets.post('/:id/close', requireAuth, requireRole('agent'), validate(closeSchema), async (req, res, next) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id).populate('createdBy');
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
+    if (ticket.status === 'closed') return res.status(400).json({ message: 'Ticket is already closed' });
+
+    const traceId = newTraceId();
+    const oldStatus = ticket.status;
+    ticket.status = 'closed';
+    await ticket.save();
+
+    await AuditLog.create({ 
+      ticketId: ticket._id, 
+      traceId, 
+      actor: 'agent', 
+      action: 'TICKET_CLOSED', 
+      meta: { 
+        reason: req.body.reason,
+        oldStatus,
+        newStatus: 'closed',
+        agentId: req.user._id,
+        agentName: req.user.name
+      }, 
+      timestamp: new Date() 
+    });
+
+    // Notify ticket creator about closing
+    await emitNotification({
+      userId: ticket.createdBy._id.toString(),
+      type: 'ticket_closed',
+      message: `Your ticket "${ticket.title}" has been closed.`,
+      ticketId: ticket._id.toString(),
+      metadata: { 
+        traceId, 
+        agentId: req.user._id.toString(),
+        reason: req.body.reason,
+        oldStatus,
+        newStatus: 'closed'
       }
     });
 
