@@ -139,19 +139,28 @@ export const TicketDetail: React.FC = () => {
     currentTicket.userId === user._id &&
     !['closed'].includes(currentTicket.status);
 
+  const isAdmin = user?.role === 'admin';
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center space-x-4">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate('/tickets')}
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Tickets
-        </Button>
-        <h1 className="text-2xl font-bold text-gray-900">{currentTicket.title}</h1>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate('/tickets')}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Tickets
+          </Button>
+          <h1 className="text-2xl font-bold text-gray-900">{currentTicket.title}</h1>
+        </div>
+        {isAdmin && (
+          <div className="bg-blue-50 text-blue-800 px-3 py-1 rounded-lg text-sm font-medium">
+            Read-only view
+          </div>
+        )}
       </div>
 
       {/* Ticket Info */}
@@ -167,6 +176,18 @@ export const TicketDetail: React.FC = () => {
           </div>
         </CardHeader>
         <CardContent>
+          {/* Ticket ID - only visible to admin users */}
+          {isAdmin && (
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-600">Ticket ID:</span>
+                <span className="text-sm font-mono font-medium text-gray-900">
+                  {currentTicket._id}
+                </span>
+              </div>
+            </div>
+          )}
+          
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="flex items-center space-x-2">
               <Tag className="h-4 w-4 text-gray-400" />
@@ -189,6 +210,27 @@ export const TicketDetail: React.FC = () => {
                 {new Date(currentTicket.updatedAt).toLocaleString()}
               </span>
             </div>
+            {/* Additional admin info */}
+            {isAdmin && (
+              <>
+                <div className="flex items-center space-x-2">
+                  <Clock className="h-4 w-4 text-gray-400" />
+                  <span className="text-sm text-gray-600">Created:</span>
+                  <span className="text-sm font-medium">
+                    {new Date(currentTicket.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <User className="h-4 w-4 text-gray-400" />
+                  <span className="text-sm text-gray-600">Created By:</span>
+                  <span className="text-sm font-medium">
+                    {typeof currentTicket.createdBy === 'object' && currentTicket.createdBy?.email 
+                      ? currentTicket.createdBy.email 
+                      : (typeof currentTicket.createdBy === 'string' ? currentTicket.createdBy : currentTicket.userId || 'Unknown')}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
           
           <div>
@@ -218,13 +260,53 @@ export const TicketDetail: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Agent Suggestion */}
+      {/* Agent Suggestion - For agents (with actions) and admins (read-only) */}
       {agentSuggestion && user?.role === 'agent' && currentTicket.status === 'waiting_human' && (
         <AgentReview
           agentSuggestion={agentSuggestion}
           onReview={handleReviewDraft}
           isLoading={isReviewing}
         />
+      )}
+
+      {/* Agent Suggestion - Read-only for admins */}
+      {agentSuggestion && isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle>AI Agent Suggestion (Read-only)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div>
+                <h4 className="font-medium text-gray-900 mb-2">Predicted Category</h4>
+                <Badge variant="default">{agentSuggestion.predictedCategory}</Badge>
+                <span className="ml-2 text-sm text-gray-600">
+                  Confidence: {Math.round(agentSuggestion.confidence * 100)}%
+                </span>
+              </div>
+              
+              <div>
+                <h4 className="font-medium text-gray-900 mb-2">Draft Reply</h4>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <p className="text-gray-700 whitespace-pre-wrap">{agentSuggestion.draftReply}</p>
+                </div>
+              </div>
+
+              {agentSuggestion.kbCitations && agentSuggestion.kbCitations.length > 0 && (
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Knowledge Base Citations</h4>
+                  <div className="space-y-2">
+                    {agentSuggestion.kbCitations.map((citation, index) => (
+                      <div key={index} className="text-sm text-blue-600">
+                        Article: {citation}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Conversation Section */}

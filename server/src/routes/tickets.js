@@ -55,8 +55,8 @@ tickets.post('/', requireAuth, requireRole('user'), validate(createSchema), asyn
       metadata: { traceId, status: 'open' }
     });
 
-    // Notify all agents about new ticket
-    const agents = await User.find({ role: { $in: ['agent', 'admin'] } });
+    // Notify all agents about new ticket (excluding admin users)
+    const agents = await User.find({ role: 'agent' });
     for (const agent of agents) {
       await emitNotification({
         userId: agent._id.toString(),
@@ -231,7 +231,8 @@ tickets.get('/:id/replies', requireAuth, validate(idSchema), async (req, res, ne
     // Check if user has access to this ticket
     const hasAccess = ticket.createdBy.equals(req.user._id) || 
                      (ticket.assignee && ticket.assignee.equals(req.user._id)) ||
-                     req.user.role === 'agent';
+                     req.user.role === 'agent' ||
+                     req.user.role === 'admin';
                      
     if (!hasAccess) {
       return res.status(403).json({ message: 'Access denied' });
@@ -243,8 +244,8 @@ tickets.get('/:id/replies', requireAuth, validate(idSchema), async (req, res, ne
       .sort({ createdAt: 1 })
       .lean();
     
-    // Filter internal replies for non-agent users
-    const filteredReplies = req.user.role === 'agent' 
+    // Filter internal replies for non-agent users (admin can see all replies)
+    const filteredReplies = (req.user.role === 'agent' || req.user.role === 'admin') 
       ? replies 
       : replies.filter(reply => !reply.isInternal);
     
