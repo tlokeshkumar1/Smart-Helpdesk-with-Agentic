@@ -16,6 +16,7 @@ export interface Ticket {
   createdAt: string;
   updatedAt: string;
   userId: string;
+  createdBy?: string | User; // Can be populated or just the ID
 }
 
 export interface AgentSuggestion {

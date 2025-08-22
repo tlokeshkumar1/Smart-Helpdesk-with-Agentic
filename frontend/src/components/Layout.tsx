@@ -99,7 +99,7 @@ export const Layout: React.FC = () => {
         {/* Top header with notifications */}
         <header className="bg-white border-b border-gray-200 px-8 py-4">
           <div className="flex items-center justify-end">
-            <NotificationBell />
+            {user.role !== 'admin' && <NotificationBell />}
           </div>
         </header>
         
