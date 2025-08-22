@@ -33,10 +33,10 @@ replies.get('/ticket/:ticketId', requireAuth, validate(getTicketRepliesSchema), 
       return res.status(404).json({ error: 'Ticket not found' });
     }
     
-    // Check if user has access to this ticket (owner, assignee, or admin/agent)
+    // Check if user has access to this ticket (owner, assignee, or agent)
     const hasAccess = ticket.createdBy.equals(req.user._id) || 
                      (ticket.assignee && ticket.assignee.equals(req.user._id)) ||
-                     ['admin', 'agent'].includes(req.user.role);
+                     req.user.role === 'agent';
                      
     if (!hasAccess) {
       return res.status(403).json({ error: 'Access denied' });
@@ -49,8 +49,8 @@ replies.get('/ticket/:ticketId', requireAuth, validate(getTicketRepliesSchema), 
       .sort({ createdAt: 1 })
       .lean();
     
-    // Filter internal replies for non-admin/agent users
-    const filteredReplies = ['admin', 'agent'].includes(req.user.role) 
+    // Filter internal replies for non-agent users
+    const filteredReplies = req.user.role === 'agent' 
       ? replies 
       : replies.filter(reply => !reply.isInternal);
     
@@ -78,14 +78,14 @@ replies.post('/', requireAuth, validate(createReplySchema), async (req, res, nex
     // Check if user has access to reply to this ticket
     const hasAccess = ticket.createdBy.equals(req.user._id) || 
                      (ticket.assignee && ticket.assignee.equals(req.user._id)) ||
-                     ['admin', 'agent'].includes(req.user.role);
+                     req.user.role === 'agent';
                      
     if (!hasAccess) {
       return res.status(403).json({ error: 'Access denied' });
     }
     
-    // Only admin/agent can create internal replies
-    if (isInternal && !['admin', 'agent'].includes(req.user.role)) {
+    // Only agents can create internal replies
+    if (isInternal && req.user.role !== 'agent') {
       return res.status(403).json({ error: 'Cannot create internal replies' });
     }
     

@@ -111,7 +111,7 @@ export const TicketDetail: React.FC = () => {
     );
   }
 
-  const canReply = user?.role !== 'user' && 
+  const canReply = user?.role === 'agent' && 
     ['triaged', 'assigned', 'waiting_human'].includes(currentTicket.status);
 
   return (
@@ -194,7 +194,7 @@ export const TicketDetail: React.FC = () => {
       </Card>
 
       {/* Agent Suggestion */}
-      {agentSuggestion && user?.role !== 'user' && currentTicket.status === 'waiting_human' && (
+      {agentSuggestion && user?.role === 'agent' && currentTicket.status === 'waiting_human' && (
         <AgentReview
           agentSuggestion={agentSuggestion}
           onReview={handleReviewDraft}
@@ -203,7 +203,7 @@ export const TicketDetail: React.FC = () => {
       )}
 
       {/* Reopen Button for Closed Tickets */}
-      {user?.role !== 'user' && currentTicket.status === 'closed' && (
+      {user?.role === 'agent' && currentTicket.status === 'closed' && (
         <Card>
           <CardHeader>
             <CardTitle>Ticket Actions</CardTitle>

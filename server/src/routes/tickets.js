@@ -228,7 +228,7 @@ tickets.get('/:id/replies', requireAuth, validate(idSchema), async (req, res, ne
     // Check if user has access to this ticket
     const hasAccess = ticket.createdBy.equals(req.user._id) || 
                      (ticket.assignee && ticket.assignee.equals(req.user._id)) ||
-                     ['admin', 'agent'].includes(req.user.role);
+                     req.user.role === 'agent';
                      
     if (!hasAccess) {
       return res.status(403).json({ message: 'Access denied' });
@@ -240,8 +240,8 @@ tickets.get('/:id/replies', requireAuth, validate(idSchema), async (req, res, ne
       .sort({ createdAt: 1 })
       .lean();
     
-    // Filter internal replies for non-admin/agent users
-    const filteredReplies = ['admin', 'agent'].includes(req.user.role) 
+    // Filter internal replies for non-agent users
+    const filteredReplies = req.user.role === 'agent' 
       ? replies 
       : replies.filter(reply => !reply.isInternal);
     
@@ -276,7 +276,7 @@ const replySchema = Joi.object({
   })
 });
 
-tickets.post('/:id/reply', requireAuth, requireRole('agent', 'admin'), validate(replySchema), async (req, res, next) => {
+tickets.post('/:id/reply', requireAuth, requireRole('agent'), validate(replySchema), async (req, res, next) => {
   try {
     const ticket = await Ticket.findById(req.params.id).populate('createdBy');
     if (!ticket) return res.status(404).json({ message: 'Not found' });
@@ -399,7 +399,7 @@ const reviewDraftSchema = Joi.object({
   })
 });
 
-tickets.post('/:id/review-draft', requireAuth, requireRole('agent', 'admin'), validate(reviewDraftSchema), async (req, res, next) => {
+tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(reviewDraftSchema), async (req, res, next) => {
   try {
     const ticket = await Ticket.findById(req.params.id).populate('agentSuggestionId createdBy');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
@@ -541,7 +541,7 @@ const reopenSchema = Joi.object({
   })
 });
 
-tickets.post('/:id/reopen', requireAuth, requireRole('agent', 'admin'), validate(reopenSchema), async (req, res, next) => {
+tickets.post('/:id/reopen', requireAuth, requireRole('agent'), validate(reopenSchema), async (req, res, next) => {
   try {
     const ticket = await Ticket.findById(req.params.id).populate('createdBy');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
