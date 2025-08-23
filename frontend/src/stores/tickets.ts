@@ -117,19 +117,24 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
     sendImmediately?: boolean;
     closeTicket?: boolean;
   }) => {
-    const response = await api.post(`/tickets/${id}/review-draft`, {
-      action,
-      editedReply: options?.editedReply,
-      feedback: options?.feedback,
-      sendImmediately: options?.sendImmediately || false,
-      closeTicket: options?.closeTicket || false
-    });
+    try {
+      const response = await api.post(`/tickets/${id}/review-draft`, {
+        action,
+        editedReply: options?.editedReply,
+        feedback: options?.feedback,
+        sendImmediately: options?.sendImmediately || false,
+        closeTicket: options?.closeTicket || false
+      });
 
-    // Refresh the ticket after review
-    await get().fetchTicket(id);
-    await get().fetchAuditEvents(id);
+      // Refresh the ticket after review
+      await get().fetchTicket(id);
+      await get().fetchAuditEvents(id);
 
-    return response.data;
+      return response.data;
+    } catch (error) {
+      console.error('Error in reviewDraft:', error);
+      throw error;
+    }
   },
 
   reopenTicket: async (id: string, reason?: string) => {

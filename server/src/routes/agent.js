@@ -38,6 +38,9 @@ agent.post('/triage', requireAuth, requireRole('admin', 'agent', 'user'), valida
 agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next) => {
   try {
     const agentId = req.query.agentId; // Agent ID from query parameters
+    const showAll = req.query.showAll === 'true'; // Optional parameter to show all tickets
+    
+    console.log('Dashboard request params:', { agentId, showAll });
     
     if (!agentId) {
       return res.status(400).json({ message: 'Agent ID is required' });
@@ -56,15 +59,22 @@ agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next
     // Get agent-specific metrics
     const [
       acceptedTicketsCount,
+      rejectedTicketsCount,
       closedTicketsCount,
       pendingTicketsForAgent,
-      agentPendingTickets
+      agentPendingTickets,
+      allPendingTickets
     ] = await Promise.all([
       // Count accepted tickets by this agent
       PendingTicket.countDocuments({ 
         agentId: agentId, 
-        action: 'accept',
         status: 'accepted'
+      }),
+      
+      // Count rejected tickets by this agent
+      PendingTicket.countDocuments({ 
+        agentId: agentId, 
+        status: 'rejected'
       }),
       
       // Count closed tickets by this agent (from audit logs)
@@ -79,21 +89,43 @@ agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next
         status: 'pending'
       }),
       
-      // Get detailed pending tickets for this agent
+      // Get detailed pending tickets for this agent (all statuses)
       PendingTicket.find({
-        agentId: agentId,
-        status: 'pending'
+        agentId: agentId
       })
       .populate({
         path: 'ticketId',
-        populate: {
-          path: 'createdBy',
-          select: 'name email'
-        }
+        populate: [
+          {
+            path: 'createdBy',
+            select: 'name email'
+          },
+          {
+            path: 'agentSuggestionId'
+          }
+        ]
       })
       .sort({ assignedAt: -1 })
-      .limit(10)
-      .lean()
+      .limit(20)
+      .lean(),
+      
+      // Get all pending tickets (regardless of agent) if showAll is true
+      showAll ? PendingTicket.find({})
+        .populate({
+          path: 'ticketId',
+          populate: [
+            {
+              path: 'createdBy',
+              select: 'name email'
+            },
+            {
+              path: 'agentSuggestionId'
+            }
+          ]
+        })
+        .sort({ assignedAt: -1 })
+        .limit(100)
+        .lean() : []
     ]);
 
     // Transform general pending tickets for frontend
@@ -104,11 +136,66 @@ agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next
           confidence: ticket.agentSuggestionId.confidence,
           draftReply: ticket.agentSuggestionId.draftReply,
           kbCitations: ticket.agentSuggestionId.articleIds || [],
-          autoClosed: ticket.agentSuggestionId.autoClosed || false
+          autoClosed: ticket.agentSuggestionId.autoClosed || false,
+          reviewed: ticket.agentSuggestionId.reviewed || false,
+          reviewResult: ticket.agentSuggestionId.reviewResult || null,
+          reviewedBy: ticket.agentSuggestionId.reviewedBy || null,
+          reviewedAt: ticket.agentSuggestionId.reviewedAt || null
         };
         delete ticket.agentSuggestionId;
       }
       return ticket;
+    });
+
+    // Transform agent pending tickets for frontend
+    const transformedAgentPendingTickets = agentPendingTickets.map(pendingTicket => {
+      if (pendingTicket.ticketId && pendingTicket.ticketId.agentSuggestionId) {
+        pendingTicket.ticketId.agentSuggestion = {
+          predictedCategory: pendingTicket.ticketId.agentSuggestionId.predictedCategory,
+          confidence: pendingTicket.ticketId.agentSuggestionId.confidence,
+          draftReply: pendingTicket.ticketId.agentSuggestionId.draftReply,
+          kbCitations: pendingTicket.ticketId.agentSuggestionId.articleIds || [],
+          autoClosed: pendingTicket.ticketId.agentSuggestionId.autoClosed || false,
+          reviewed: pendingTicket.ticketId.agentSuggestionId.reviewed || false,
+          reviewResult: pendingTicket.ticketId.agentSuggestionId.reviewResult || null,
+          reviewedBy: pendingTicket.ticketId.agentSuggestionId.reviewedBy || null,
+          reviewedAt: pendingTicket.ticketId.agentSuggestionId.reviewedAt || null
+        };
+        delete pendingTicket.ticketId.agentSuggestionId;
+      }
+      return pendingTicket;
+    });
+    
+    // Transform all pending tickets (if showAll is true)
+    const transformedAllPendingTickets = allPendingTickets.map(pendingTicket => {
+      if (pendingTicket.ticketId && pendingTicket.ticketId.agentSuggestionId) {
+        pendingTicket.ticketId.agentSuggestion = {
+          predictedCategory: pendingTicket.ticketId.agentSuggestionId.predictedCategory,
+          confidence: pendingTicket.ticketId.agentSuggestionId.confidence,
+          draftReply: pendingTicket.ticketId.agentSuggestionId.draftReply,
+          kbCitations: pendingTicket.ticketId.agentSuggestionId.articleIds || [],
+          autoClosed: pendingTicket.ticketId.agentSuggestionId.autoClosed || false,
+          reviewed: pendingTicket.ticketId.agentSuggestionId.reviewed || false,
+          reviewResult: pendingTicket.ticketId.agentSuggestionId.reviewResult || null,
+          reviewedBy: pendingTicket.ticketId.agentSuggestionId.reviewedBy || null,
+          reviewedAt: pendingTicket.ticketId.agentSuggestionId.reviewedAt || null
+        };
+        delete pendingTicket.ticketId.agentSuggestionId;
+      }
+      return pendingTicket;
+    });
+
+    console.log('Agent dashboard - returning data:', {
+      agentId,
+      totalPendingTickets: ticketsWithSuggestions.length,
+      agentAcceptedCount: acceptedTicketsCount,
+      agentRejectedCount: rejectedTicketsCount,
+      agentPendingTicketsCount: transformedAgentPendingTickets.length,
+      acceptedTickets: transformedAgentPendingTickets.filter(t => t.status === 'accepted').length,
+      rejectedTickets: transformedAgentPendingTickets.filter(t => t.status === 'rejected').length,
+      pendingTickets: transformedAgentPendingTickets.filter(t => t.status === 'pending').length,
+      showAll,
+      allPendingTicketsCount: transformedAllPendingTickets.length
     });
 
     res.json({
@@ -120,10 +207,14 @@ agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next
       agentMetrics: {
         agentId: agentId,
         acceptedTickets: acceptedTicketsCount,
+        rejectedTickets: rejectedTicketsCount,
         closedTickets: closedTicketsCount,
         pendingTickets: pendingTicketsForAgent,
-        agentPendingTickets: agentPendingTickets
-      }
+        agentPendingTickets: transformedAgentPendingTickets
+      },
+      
+      // All pending tickets (if showAll is true)
+      allPendingTickets: showAll ? transformedAllPendingTickets : undefined
     });
   } catch (e) {
     next(e);
@@ -170,7 +261,11 @@ agent.get('/tickets/:id', requireAuth, requireRole('agent'), validate(ticketDeta
         draftReply: ticket.agentSuggestionId.draftReply,
         kbCitations: ticket.agentSuggestionId.articleIds || [],
         autoClosed: ticket.agentSuggestionId.autoClosed || false,
-        qualityMetrics: ticket.agentSuggestionId.qualityMetrics || {}
+        qualityMetrics: ticket.agentSuggestionId.qualityMetrics || {},
+        reviewed: ticket.agentSuggestionId.reviewed || false,
+        reviewResult: ticket.agentSuggestionId.reviewResult || null,
+        reviewedBy: ticket.agentSuggestionId.reviewedBy || null,
+        reviewedAt: ticket.agentSuggestionId.reviewedAt || null
       };
       delete ticket.agentSuggestionId;
     }

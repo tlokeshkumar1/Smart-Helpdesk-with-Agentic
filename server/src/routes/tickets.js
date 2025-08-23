@@ -7,6 +7,7 @@ import { Ticket } from '../models/Ticket.js';
 import { AgentSuggestion } from '../models/AgentSuggestion.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { TicketReply } from '../models/TicketReply.js';
+import { PendingTicket } from '../models/PendingTicket.js';
 import { User } from '../models/User.js';
 import { newTraceId } from '../utils/trace.js';
 import { triageTicket } from '../services/agentService.js';
@@ -94,7 +95,11 @@ tickets.post('/', requireAuth, requireRole('user'), validate(createSchema), asyn
         predictedCategory: populated.agentSuggestionId.predictedCategory,
         confidence: populated.agentSuggestionId.confidence,
         draftReply: populated.agentSuggestionId.draftReply,
-        kbCitations: populated.agentSuggestionId.articleIds || []
+        kbCitations: populated.agentSuggestionId.articleIds || [],
+        reviewed: populated.agentSuggestionId.reviewed || false,
+        reviewResult: populated.agentSuggestionId.reviewResult || null,
+        reviewedBy: populated.agentSuggestionId.reviewedBy || null,
+        reviewedAt: populated.agentSuggestionId.reviewedAt || null
       };
       delete populated.agentSuggestionId;
     }
@@ -135,7 +140,11 @@ tickets.get('/:id', requireAuth, validate(idSchema), async (req, res, next) => {
         predictedCategory: doc.agentSuggestionId.predictedCategory,
         confidence: doc.agentSuggestionId.confidence,
         draftReply: doc.agentSuggestionId.draftReply,
-        kbCitations: doc.agentSuggestionId.articleIds || []
+        kbCitations: doc.agentSuggestionId.articleIds || [],
+        reviewed: doc.agentSuggestionId.reviewed || false,
+        reviewResult: doc.agentSuggestionId.reviewResult || null,
+        reviewedBy: doc.agentSuggestionId.reviewedBy || null,
+        reviewedAt: doc.agentSuggestionId.reviewedAt || null
       };
       delete doc.agentSuggestionId;
     }
@@ -527,10 +536,23 @@ const reviewDraftSchema = Joi.object({
 
 tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(reviewDraftSchema), async (req, res, next) => {
   try {
+    console.log('Review draft request received:', {
+      ticketId: req.params.id,
+      action: req.body.action,
+      agentId: req.user._id,
+      agentName: req.user.name
+    });
+
     const ticket = await Ticket.findById(req.params.id).populate('agentSuggestionId createdBy');
     if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
     if (!ticket.agentSuggestionId) return res.status(400).json({ message: 'No agent suggestion found for this ticket' });
     if (!['waiting_human', 'resolved'].includes(ticket.status)) return res.status(400).json({ message: 'Ticket is not in a status that allows draft review' });
+
+    console.log('Ticket found:', {
+      id: ticket._id,
+      status: ticket.status,
+      hasAgentSuggestion: !!ticket.agentSuggestionId
+    });
 
     const traceId = newTraceId();
     const { action, editedReply, feedback, sendImmediately, closeTicket } = req.body;
@@ -551,8 +573,44 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         break;
     }
 
+    // Create or update PendingTicket record
+    let pendingTicket = await PendingTicket.findOne({ 
+      ticketId: ticket._id, 
+      agentId: req.user._id.toString() 
+    });
+
+    if (pendingTicket) {
+      // Update existing pending ticket
+      console.log('Updating existing pending ticket:', pendingTicket._id);
+      pendingTicket.action = action;
+      pendingTicket.status = action === 'reject' ? 'rejected' : 'accepted';
+      pendingTicket.willSendImmediately = sendImmediately;
+      pendingTicket.willCloseTicket = closeTicket;
+      pendingTicket.respondedAt = new Date();
+      await pendingTicket.save();
+    } else {
+      // Create new pending ticket
+      console.log('Creating new pending ticket');
+      pendingTicket = await PendingTicket.create({
+        ticketId: ticket._id,
+        agentId: req.user._id.toString(),
+        agentName: req.user.name,
+        action: action,
+        originalReply: ticket.agentSuggestionId.draftReply,
+        confidence: ticket.agentSuggestionId.confidence,
+        willSendImmediately: sendImmediately,
+        willCloseTicket: closeTicket,
+        status: action === 'reject' ? 'rejected' : 'accepted',
+        traceId: traceId,
+        assignedAt: new Date(),
+        respondedAt: new Date()
+      });
+      console.log('Created pending ticket:', pendingTicket._id);
+    }
+
     // Log the review action
-    await AuditLog.create({ 
+    console.log('Creating audit log for action:', actionType);
+    const auditLog = await AuditLog.create({ 
       ticketId: ticket._id, 
       traceId, 
       actor: 'agent', 
@@ -562,14 +620,39 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         originalReply: ticket.agentSuggestionId.draftReply,
         editedReply: action === 'edit' ? editedReply : undefined,
         feedback,
-        agentId: req.user._id,
+        agentId: req.user._id.toString(),
         agentName: req.user.name,
         confidence: ticket.agentSuggestionId.confidence,
         willSendImmediately: sendImmediately,
-        willCloseTicket: closeTicket
+        willCloseTicket: closeTicket,
+        pendingTicketId: pendingTicket._id.toString()
       }, 
       timestamp: new Date() 
     });
+    console.log('Created audit log:', auditLog._id);
+
+    // Update pending ticket with audit log reference
+    pendingTicket.auditLogId = auditLog._id;
+    await pendingTicket.save();
+    console.log('Updated pending ticket with audit log reference');
+
+    // Update AgentSuggestion to mark as reviewed
+    await AgentSuggestion.findByIdAndUpdate(ticket.agentSuggestionId._id, {
+      reviewed: true,
+      reviewResult: action,
+      reviewedBy: req.user._id,
+      reviewedAt: new Date()
+    });
+    console.log('Marked agent suggestion as reviewed');
+
+    // If accepting or editing, assign the ticket to the agent and update status
+    if (action === 'accept' || action === 'edit') {
+      ticket.assignee = req.user._id;
+      if (ticket.status === 'waiting_human') {
+        ticket.status = 'triaged';
+      }
+      await ticket.save();
+    }
 
     // If sending immediately, create reply and update ticket status
     if (sendImmediately && (action === 'accept' || action === 'edit')) {
@@ -641,7 +724,11 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         predictedCategory: updatedTicket.agentSuggestionId.predictedCategory,
         confidence: updatedTicket.agentSuggestionId.confidence,
         draftReply: updatedTicket.agentSuggestionId.draftReply,
-        kbCitations: updatedTicket.agentSuggestionId.articleIds || []
+        kbCitations: updatedTicket.agentSuggestionId.articleIds || [],
+        reviewed: updatedTicket.agentSuggestionId.reviewed || false,
+        reviewResult: updatedTicket.agentSuggestionId.reviewResult || null,
+        reviewedBy: updatedTicket.agentSuggestionId.reviewedBy || null,
+        reviewedAt: updatedTicket.agentSuggestionId.reviewedAt || null
       };
       delete updatedTicket.agentSuggestionId;
     }
