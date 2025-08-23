@@ -88,6 +88,10 @@ export const TicketDetail: React.FC = () => {
     setIsReviewing(true);
     try {
       await reviewDraft(id, action, options);
+      console.log(`Successfully ${action}ed draft for ticket ${id}`);
+    } catch (error) {
+      console.error(`Error ${action}ing draft:`, error);
+      throw error;
     } finally {
       setIsReviewing(false);
     }
@@ -277,12 +281,43 @@ export const TicketDetail: React.FC = () => {
       </Card>
 
       {/* Agent Suggestion - For agents (with actions) and admins (read-only) */}
-      {agentSuggestion && user?.role === 'agent' && ['waiting_human', 'resolved'].includes(currentTicket.status) && (
+      {agentSuggestion && !agentSuggestion.reviewed && user?.role === 'agent' && ['waiting_human', 'resolved'].includes(currentTicket.status) && (
         <AgentReview
           agentSuggestion={agentSuggestion}
           onReview={handleReviewDraft}
           isLoading={isReviewing}
         />
+      )}
+
+      {/* Show review result if already reviewed */}
+      {agentSuggestion && agentSuggestion.reviewed && (
+        <Card>
+          <CardHeader>
+            <CardTitle>AI Suggestion Review Result</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">Status:</span>
+                <Badge variant={agentSuggestion.reviewResult === 'accepted' ? 'success' : 
+                              agentSuggestion.reviewResult === 'rejected' ? 'danger' : 'default'}>
+                  {agentSuggestion.reviewResult ? 
+                    agentSuggestion.reviewResult.charAt(0).toUpperCase() + agentSuggestion.reviewResult.slice(1) : 
+                    'Unknown'}
+                </Badge>
+              </div>
+              {agentSuggestion.reviewedAt && (
+                <div className="text-sm text-gray-600">
+                  Reviewed on {new Date(agentSuggestion.reviewedAt).toLocaleString()}
+                </div>
+              )}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h5 className="text-sm font-medium text-gray-700 mb-2">AI Suggested Reply:</h5>
+                <p className="text-gray-800 whitespace-pre-wrap">{agentSuggestion.draftReply}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Agent Suggestion - Read-only for admins */}

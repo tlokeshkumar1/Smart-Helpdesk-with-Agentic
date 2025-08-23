@@ -6,7 +6,6 @@ import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { 
-  Activity, 
   CheckCircle, 
   Clock, 
   XCircle, 
@@ -32,6 +31,10 @@ interface TicketInfo {
     draftReply: string;
     kbCitations: string[];
     autoClosed: boolean;
+    reviewed?: boolean;
+    reviewResult?: 'accepted' | 'edited' | 'rejected' | null;
+    reviewedBy?: string | null;
+    reviewedAt?: string | null;
   };
 }
 
@@ -44,11 +47,13 @@ interface PendingTicketDetail {
   confidence: number;
   status: string;
   assignedAt: string;
+  respondedAt?: string;
 }
 
 interface AgentMetrics {
   agentId: string;
   acceptedTickets: number;
+  rejectedTickets: number;
   closedTickets: number;
   pendingTickets: number;
   agentPendingTickets: PendingTicketDetail[];
@@ -58,14 +63,16 @@ interface DashboardData {
   pendingTickets: TicketInfo[];
   totalPending: number;
   agentMetrics: AgentMetrics;
+  allPendingTickets?: PendingTicketDetail[];
 }
 
 export default function AgentDashboard() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
-  const [agentId, setAgentId] = useState('68a8843eee879abdb97a5db0'); // Default agent ID
+  const [agentId, setAgentId] = useState('68a9fc377c8ecde7e799e337'); // Default agent ID
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { token } = useAuthStore();
+  const [showAll, setShowAll] = useState(false);
+  const { token, user } = useAuthStore();
 
   const fetchDashboardData = useCallback(async () => {
     if (!agentId.trim()) {
@@ -77,9 +84,16 @@ export default function AgentDashboard() {
     setError('');
     
     try {
-      const response = await api.get(`/agent/dashboard?agentId=${agentId}`, {
+      console.log('Fetching dashboard data for agent:', agentId, 'showAll:', showAll);
+      const response = await api.get(`/agent/dashboard?agentId=${agentId}&showAll=${showAll}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      console.log('Dashboard response:', response.data);
+      console.log('Agent pending tickets:', response.data.agentMetrics?.agentPendingTickets);
+      console.log('Accepted tickets:', response.data.agentMetrics?.agentPendingTickets?.filter((t: PendingTicketDetail) => t.status === 'accepted'));
+      if (showAll) {
+        console.log('All pending tickets:', response.data.allPendingTickets);
+      }
       setDashboardData(response.data);
     } catch (err) {
       console.error('Failed to fetch dashboard data:', err);
@@ -92,28 +106,28 @@ export default function AgentDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [agentId, token]);
+  }, [agentId, token, showAll]);
 
-  const handleAgentResponse = async (ticketId: string, action: 'accept' | 'reject', originalData: PendingTicketDetail) => {
+  const handleAgentResponse = async (ticketId: string, action: 'accept' | 'reject') => {
     try {
+      console.log(`${action}ing ticket ${ticketId}...`);
       const payload = {
-        ticketId,
         action,
-        agentId,
-        agentName: originalData.agentName,
-        originalReply: originalData.originalReply,
-        confidence: originalData.confidence,
-        willSendImmediately: false,
-        willCloseTicket: false,
-        traceId: `trace-${Date.now()}`
+        sendImmediately: false,
+        closeTicket: false,
+        feedback: `Agent ${action}ed from dashboard`
       };
 
-      await api.post('/agent/respond-to-draft', payload, {
+      const response = await api.post(`/tickets/${ticketId}/review-draft`, payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      
+      console.log(`Successfully ${action}ed ticket:`, response.data);
 
-      // Refresh dashboard data
-      fetchDashboardData();
+      // Refresh dashboard data after successful action
+      console.log('Refreshing dashboard data...');
+      await fetchDashboardData();
+      console.log('Dashboard data refreshed');
     } catch (err) {
       console.error(`Failed to ${action} ticket:`, err);
       const errorMessage = err instanceof Error && 'response' in err && err.response && 
@@ -129,7 +143,7 @@ export default function AgentDashboard() {
     if (agentId) {
       fetchDashboardData();
     }
-  }, [agentId, fetchDashboardData]);
+  }, [agentId, fetchDashboardData, showAll]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -169,14 +183,36 @@ export default function AgentDashboard() {
                 id="agentId"
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}
-                placeholder="Enter Agent ID (e.g., 68a8843eee879abdb97a5db0)"
+                placeholder="Enter Agent ID (e.g., 68a9fc377c8ecde7e799e337)"
                 className="mt-1"
               />
             </div>
+            <div className="flex items-center gap-2">
+              <input 
+                type="checkbox" 
+                id="showAll" 
+                checked={showAll} 
+                onChange={(e) => setShowAll(e.target.checked)}
+                className="mr-1"
+              />
+              <Label htmlFor="showAll">Show all pending tickets</Label>
+            </div>
+            <Button 
+              onClick={() => setAgentId(user?._id || '')} 
+              variant="outline"
+              disabled={!user?._id}
+            >
+              Use My ID
+            </Button>
             <Button onClick={fetchDashboardData} disabled={loading}>
               {loading ? 'Loading...' : 'Load Dashboard'}
             </Button>
           </div>
+          {user && (
+            <p className="text-sm text-muted-foreground mt-2">
+              Logged in as: {user.name} ({user._id})
+            </p>
+          )}
           {error && (
             <p className="text-sm text-destructive mt-2">{error}</p>
           )}
@@ -199,6 +235,21 @@ export default function AgentDashboard() {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Tickets accepted by agent
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Rejected Tickets</CardTitle>
+                <XCircle className="h-4 w-4 text-red-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-red-600">
+                  {dashboardData.agentMetrics.rejectedTickets}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Tickets rejected by agent
                 </p>
               </CardContent>
             </Card>
@@ -232,28 +283,15 @@ export default function AgentDashboard() {
                 </p>
               </CardContent>
             </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Pending</CardTitle>
-                <Activity className="h-4 w-4 text-purple-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-purple-600">
-                  {dashboardData.totalPending}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  All pending tickets
-                </p>
-              </CardContent>
-            </Card>
           </div>
 
           {/* Tabs for different views */}
           <Tabs defaultValue="agent-pending" className="space-y-4">
             <TabsList>
               <TabsTrigger value="agent-pending">Agent Pending Tickets</TabsTrigger>
-              <TabsTrigger value="all-pending">All Pending Tickets</TabsTrigger>
+              <TabsTrigger value="agent-accepted">Agent Accepted Tickets</TabsTrigger>
+              <TabsTrigger value="agent-rejected">Agent Rejected Tickets</TabsTrigger>
+              {showAll && <TabsTrigger value="all-agents">All Agents' Tickets</TabsTrigger>}
             </TabsList>
 
             {/* Agent Pending Tickets */}
@@ -269,13 +307,17 @@ export default function AgentDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {dashboardData.agentMetrics.agentPendingTickets.length === 0 ? (
+                  {dashboardData.agentMetrics.agentPendingTickets.filter(pendingTicket => 
+                    !pendingTicket.ticketId?.agentSuggestion?.reviewed
+                  ).length === 0 ? (
                     <p className="text-center text-muted-foreground py-8">
                       No pending tickets for this agent
                     </p>
                   ) : (
                     <div className="space-y-4">
-                      {dashboardData.agentMetrics.agentPendingTickets.map((pendingTicket: PendingTicketDetail) => (
+                      {dashboardData.agentMetrics.agentPendingTickets
+                        .filter(pendingTicket => !pendingTicket.ticketId?.agentSuggestion?.reviewed)
+                        .map((pendingTicket: PendingTicketDetail) => (
                         <div key={pendingTicket._id} className="border rounded-lg p-4 space-y-3">
                           <div className="flex items-start justify-between">
                             <div className="space-y-1">
@@ -310,8 +352,7 @@ export default function AgentDashboard() {
                                 size="sm"
                                 onClick={() => handleAgentResponse(
                                   pendingTicket.ticketId._id,
-                                  'accept',
-                                  pendingTicket
+                                  'accept'
                                 )}
                                 className="bg-green-600 hover:bg-green-700"
                               >
@@ -323,8 +364,7 @@ export default function AgentDashboard() {
                                 variant="danger"
                                 onClick={() => handleAgentResponse(
                                   pendingTicket.ticketId._id,
-                                  'reject',
-                                  pendingTicket
+                                  'reject'
                                 )}
                               >
                                 <XCircle className="h-4 w-4 mr-1" />
@@ -340,55 +380,55 @@ export default function AgentDashboard() {
               </Card>
             </TabsContent>
 
-            {/* All Pending Tickets */}
-            <TabsContent value="all-pending">
+            {/* Agent Accepted Tickets */}
+            <TabsContent value="agent-accepted">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Ticket className="h-5 w-5" />
-                    All Pending Tickets
+                    <CheckCircle className="h-5 w-5" />
+                    Accepted Tickets
                   </CardTitle>
                   <CardDescription>
-                    All tickets in the system that need attention
+                    Tickets accepted by agent {agentId}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {dashboardData.pendingTickets.length === 0 ? (
+                  {dashboardData.agentMetrics.agentPendingTickets.filter(pendingTicket => 
+                    pendingTicket.status === 'accepted'
+                  ).length === 0 ? (
                     <p className="text-center text-muted-foreground py-8">
-                      No pending tickets in the system
+                      No accepted tickets yet
                     </p>
                   ) : (
                     <div className="space-y-4">
-                      {dashboardData.pendingTickets.map((ticket: TicketInfo) => (
-                        <div key={ticket._id} className="border rounded-lg p-4 space-y-2">
+                      {dashboardData.agentMetrics.agentPendingTickets
+                        .filter(pendingTicket => pendingTicket.status === 'accepted')
+                        .map((pendingTicket: PendingTicketDetail) => (
+                        <div key={pendingTicket._id} className="border rounded-lg p-4 space-y-3">
                           <div className="flex items-start justify-between">
                             <div className="space-y-1">
-                              <h3 className="font-semibold">{ticket.title}</h3>
+                              <h3 className="font-semibold">
+                                {pendingTicket.ticketId?.title || 'Unknown Ticket'}
+                              </h3>
                               <p className="text-sm text-muted-foreground">
-                                Created by: {ticket.createdBy?.name || 'Unknown'}
+                                Created by: {pendingTicket.ticketId?.createdBy?.name || 'Unknown'}
                               </p>
                               <p className="text-sm text-muted-foreground">
-                                Category: {ticket.category}
+                                Accepted: {formatDate(pendingTicket.respondedAt || pendingTicket.assignedAt)}
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
-                              <Badge variant="secondary">{ticket.status}</Badge>
-                              {ticket.agentSuggestion && (
-                                <Badge variant="secondary">
-                                  AI Suggested ({(ticket.agentSuggestion.confidence * 100).toFixed(0)}%)
-                                </Badge>
-                              )}
+                              <Badge variant="success">Accepted</Badge>
+                              <Badge variant="secondary">
+                                Confidence: {(pendingTicket.confidence * 100).toFixed(0)}%
+                              </Badge>
                             </div>
                           </div>
                           
-                          <p className="text-sm">{ticket.description}</p>
-                          
-                          {ticket.agentSuggestion && (
-                            <div className="bg-muted/50 rounded p-3 mt-2">
-                              <p className="text-sm font-medium mb-1">AI Suggested Reply:</p>
-                              <p className="text-sm">{ticket.agentSuggestion.draftReply}</p>
-                            </div>
-                          )}
+                          <div className="bg-green-50 rounded p-3">
+                            <p className="text-sm font-medium mb-1">Accepted Reply:</p>
+                            <p className="text-sm">{pendingTicket.originalReply}</p>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -396,6 +436,134 @@ export default function AgentDashboard() {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* Agent Rejected Tickets */}
+            <TabsContent value="agent-rejected">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <XCircle className="h-5 w-5" />
+                    Rejected Tickets
+                  </CardTitle>
+                  <CardDescription>
+                    Tickets rejected by agent {agentId}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {dashboardData.agentMetrics.agentPendingTickets.filter(pendingTicket => 
+                    pendingTicket.status === 'rejected'
+                  ).length === 0 ? (
+                    <p className="text-center text-muted-foreground py-8">
+                      No rejected tickets yet
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
+                      {dashboardData.agentMetrics.agentPendingTickets
+                        .filter(pendingTicket => pendingTicket.status === 'rejected')
+                        .map((pendingTicket: PendingTicketDetail) => (
+                        <div key={pendingTicket._id} className="border rounded-lg p-4 space-y-3">
+                          <div className="flex items-start justify-between">
+                            <div className="space-y-1">
+                              <h3 className="font-semibold">
+                                {pendingTicket.ticketId?.title || 'Unknown Ticket'}
+                              </h3>
+                              <p className="text-sm text-muted-foreground">
+                                Created by: {pendingTicket.ticketId?.createdBy?.name || 'Unknown'}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                Rejected: {formatDate(pendingTicket.respondedAt || pendingTicket.assignedAt)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="danger">Rejected</Badge>
+                              <Badge variant="secondary">
+                                Confidence: {(pendingTicket.confidence * 100).toFixed(0)}%
+                              </Badge>
+                            </div>
+                          </div>
+                          
+                          <div className="bg-red-50 rounded p-3">
+                            <p className="text-sm font-medium mb-1">Rejected Reply:</p>
+                            <p className="text-sm">{pendingTicket.originalReply}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            {/* All Agents' Tickets */}
+            {showAll && (
+              <TabsContent value="all-agents">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Users className="h-5 w-5" />
+                      All Agents' Tickets
+                    </CardTitle>
+                    <CardDescription>
+                      View tickets from all agents across the system
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {!dashboardData.allPendingTickets || dashboardData.allPendingTickets.length === 0 ? (
+                      <p className="text-center text-muted-foreground py-8">
+                        No agent tickets found in the system
+                      </p>
+                    ) : (
+                      <div className="space-y-4">
+                        {dashboardData.allPendingTickets.map((pendingTicket: PendingTicketDetail) => (
+                          <div key={pendingTicket._id} className="border rounded-lg p-4 space-y-3">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-1">
+                                <h3 className="font-semibold">
+                                  {pendingTicket.ticketId?.title || 'Unknown Ticket'}
+                                </h3>
+                                <p className="text-sm text-muted-foreground">
+                                  Created by: {pendingTicket.ticketId?.createdBy?.name || 'Unknown'}
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                  Agent ID: {pendingTicket.agentId}
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                  {pendingTicket.status === 'accepted' ? 'Accepted' : 
+                                   pendingTicket.status === 'rejected' ? 'Rejected' : 'Pending'}: 
+                                  {formatDate(pendingTicket.respondedAt || pendingTicket.assignedAt)}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Badge variant={
+                                  pendingTicket.status === 'accepted' ? 'success' : 
+                                  pendingTicket.status === 'rejected' ? 'danger' : 'secondary'
+                                }>
+                                  {pendingTicket.status}
+                                </Badge>
+                                <Badge variant="secondary">
+                                  Confidence: {(pendingTicket.confidence * 100).toFixed(0)}%
+                                </Badge>
+                              </div>
+                            </div>
+                            
+                            <div className={`rounded p-3 ${
+                              pendingTicket.status === 'accepted' ? 'bg-green-50' : 
+                              pendingTicket.status === 'rejected' ? 'bg-red-50' : 'bg-muted/50'
+                            }`}>
+                              <p className="text-sm font-medium mb-1">
+                                {pendingTicket.status === 'accepted' ? 'Accepted Reply' : 
+                                 pendingTicket.status === 'rejected' ? 'Rejected Reply' : 'Suggested Reply'}:
+                              </p>
+                              <p className="text-sm">{pendingTicket.originalReply}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            )}
           </Tabs>
         </>
       )}

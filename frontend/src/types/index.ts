@@ -24,6 +24,10 @@ export interface AgentSuggestion {
   confidence: number;
   draftReply: string;
   kbCitations: string[];
+  reviewed?: boolean;
+  reviewResult?: 'accepted' | 'edited' | 'rejected' | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
 }
 
 export interface AuditEvent {

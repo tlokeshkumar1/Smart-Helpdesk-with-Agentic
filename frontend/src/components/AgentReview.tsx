@@ -38,7 +38,8 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
       });
       toast.success(sendImmediately ? 'Draft accepted and sent!' : 'Draft accepted');
       resetForm();
-    } catch {
+    } catch (error) {
+      console.error('Error accepting draft:', error);
       toast.error('Failed to accept draft');
     }
   };
@@ -59,7 +60,8 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
       toast.success(sendImmediately ? 'Draft edited and sent!' : 'Draft edited');
       resetForm();
       setIsEditing(false);
-    } catch {
+    } catch (error) {
+      console.error('Error editing draft:', error);
       toast.error('Failed to edit draft');
     }
   };
@@ -71,7 +73,8 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
       });
       toast.success('Draft rejected');
       resetForm();
-    } catch {
+    } catch (error) {
+      console.error('Error rejecting draft:', error);
       toast.error('Failed to reject draft');
     }
   };
