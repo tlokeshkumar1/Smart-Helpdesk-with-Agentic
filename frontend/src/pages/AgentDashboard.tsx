@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/auth';
+import { User } from '../types';
 
 interface TicketInfo {
   _id: string;
@@ -68,11 +69,17 @@ interface DashboardData {
 
 export default function AgentDashboard() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
-  const [agentId, setAgentId] = useState('68a9fc377c8ecde7e799e337'); // Default agent ID
+  const { token, user } = useAuthStore();
+  const [agentId, setAgentId] = useState(''); // Start empty, will be set when user loads
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showAll, setShowAll] = useState(false);
-  const { token, user } = useAuthStore();
+
+  // Helper function to get user ID (handles both _id and id properties)
+  const getUserId = (user: User | null): string => {
+    if (!user) return '';
+    return user._id || (user as { id?: string }).id || '';
+  };
 
   const fetchDashboardData = useCallback(async () => {
     if (!agentId.trim()) {
@@ -84,19 +91,11 @@ export default function AgentDashboard() {
     setError('');
     
     try {
-      console.log('Fetching dashboard data for agent:', agentId, 'showAll:', showAll);
       const response = await api.get(`/agent/dashboard?agentId=${agentId}&showAll=${showAll}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      console.log('Dashboard response:', response.data);
-      console.log('Agent pending tickets:', response.data.agentMetrics?.agentPendingTickets);
-      console.log('Accepted tickets:', response.data.agentMetrics?.agentPendingTickets?.filter((t: PendingTicketDetail) => t.status === 'accepted'));
-      if (showAll) {
-        console.log('All pending tickets:', response.data.allPendingTickets);
-      }
       setDashboardData(response.data);
     } catch (err) {
-      console.error('Failed to fetch dashboard data:', err);
       const errorMessage = err instanceof Error && 'response' in err && err.response && 
         typeof err.response === 'object' && 'data' in err.response && 
         err.response.data && typeof err.response.data === 'object' && 'message' in err.response.data
@@ -110,7 +109,6 @@ export default function AgentDashboard() {
 
   const handleAgentResponse = async (ticketId: string, action: 'accept' | 'reject') => {
     try {
-      console.log(`${action}ing ticket ${ticketId}...`);
       const payload = {
         action,
         sendImmediately: false,
@@ -118,18 +116,13 @@ export default function AgentDashboard() {
         feedback: `Agent ${action}ed from dashboard`
       };
 
-      const response = await api.post(`/tickets/${ticketId}/review-draft`, payload, {
+      await api.post(`/tickets/${ticketId}/review-draft`, payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
-      console.log(`Successfully ${action}ed ticket:`, response.data);
-
       // Refresh dashboard data after successful action
-      console.log('Refreshing dashboard data...');
       await fetchDashboardData();
-      console.log('Dashboard data refreshed');
     } catch (err) {
-      console.error(`Failed to ${action} ticket:`, err);
       const errorMessage = err instanceof Error && 'response' in err && err.response && 
         typeof err.response === 'object' && 'data' in err.response && 
         err.response.data && typeof err.response.data === 'object' && 'message' in err.response.data
@@ -140,10 +133,18 @@ export default function AgentDashboard() {
   };
 
   useEffect(() => {
-    if (agentId) {
+    if (agentId && agentId.trim()) {
       fetchDashboardData();
     }
   }, [agentId, fetchDashboardData, showAll]);
+
+  // Update agentId when user data becomes available
+  useEffect(() => {
+    const userId = getUserId(user);
+    if (userId && !agentId) {
+      setAgentId(userId);
+    }
+  }, [user, agentId]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -182,8 +183,10 @@ export default function AgentDashboard() {
               <Input
                 id="agentId"
                 value={agentId}
-                onChange={(e) => setAgentId(e.target.value)}
-                placeholder="Enter Agent ID (e.g., 68a9fc377c8ecde7e799e337)"
+                onChange={(e) => {
+                  setAgentId(e.target.value);
+                }}
+                placeholder={getUserId(user) ? `Use your ID: ${getUserId(user)}` : "Enter Agent ID"}
                 className="mt-1"
               />
             </div>
@@ -198,19 +201,33 @@ export default function AgentDashboard() {
               <Label htmlFor="showAll">Show all pending tickets</Label>
             </div>
             <Button 
-              onClick={() => setAgentId(user?._id || '')} 
+              onClick={() => {
+                const userIdToUse = getUserId(user);
+                setAgentId(userIdToUse);
+              }} 
               variant="outline"
-              disabled={!user?._id}
+              disabled={!getUserId(user)}
             >
               Use My ID
             </Button>
-            <Button onClick={fetchDashboardData} disabled={loading}>
+            <Button 
+              onClick={() => {
+                const bobsId = '68aad0cdbd7bc53f23ab9ad6';
+                setAgentId(bobsId);
+              }} 
+              variant="outline"
+            >
+              Use Bob's ID
+            </Button>
+            <Button onClick={() => {
+              fetchDashboardData();
+            }} disabled={loading}>
               {loading ? 'Loading...' : 'Load Dashboard'}
             </Button>
           </div>
           {user && (
             <p className="text-sm text-muted-foreground mt-2">
-              Logged in as: {user.name} ({user._id})
+              Logged in as: {user.name} ({getUserId(user)})
             </p>
           )}
           {error && (
