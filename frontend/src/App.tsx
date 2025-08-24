@@ -75,7 +75,7 @@ function App() {
             <Route
               path="agent-dashboard"
               element={
-                <ProtectedRoute roles={['agent', 'admin']}>
+                <ProtectedRoute roles={['agent']}>
                   <AgentDashboard />
                 </ProtectedRoute>
               }
