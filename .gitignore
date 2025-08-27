@@ -129,4 +129,4 @@ temp/
 .local/
 
 # Docker
-docker-compose.ymldocker-compose.yml
+docker-compose.yml
