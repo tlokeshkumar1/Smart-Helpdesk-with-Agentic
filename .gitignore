@@ -127,3 +127,6 @@ temp/
 
 # Local development
 .local/
+
+# Docker
+docker-compose.yml
