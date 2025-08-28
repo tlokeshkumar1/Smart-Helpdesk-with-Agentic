@@ -19,7 +19,7 @@ const createSchema = Joi.object({
   body: Joi.object({
     title: Joi.string().min(3).required(),
     description: Joi.string().min(5).required(),
-    category: Joi.string().valid('billing', 'tech', 'shipping', 'other').default('other'),
+    category: Joi.string().valid('billing', 'tech', 'shipping', 'other', 'yourNewCategory').default('other'),
     attachments: Joi.array().items(Joi.string().uri()).default([])
   })
 });
@@ -287,7 +287,9 @@ const replySchema = Joi.object({
   }),
   body: Joi.object({ 
     reply: Joi.string().allow('').required(), 
-    close: Joi.boolean().default(false) 
+    close: Joi.boolean().default(false),
+    category: Joi.string().valid('billing', 'tech', 'shipping', 'other').default('other'),
+    customCategory: Joi.string().allow('').optional(),
   })
 });
 

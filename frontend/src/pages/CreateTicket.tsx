@@ -15,6 +15,7 @@ const ticketSchema = z.object({
   title: z.string().min(1, 'Title is required'),
   description: z.string().min(1, 'Description is required'),
   category: z.string().optional(),
+  customCategory: z.string().optional(),
   attachments: z.array(z.object({ value: z.string().url('Please enter valid URLs') })).min(0),
 });
 
@@ -25,6 +26,8 @@ export const CreateTicket: React.FC = () => {
   const { user } = useAuthStore();
   const { createTicket, isLoading } = useTicketsStore();
   const [newAttachmentUrl, setNewAttachmentUrl] = useState('');
+  const [categoryValue, setCategoryValue] = useState('');
+  const [customCategory, setCustomCategory] = useState('');
 
   const {
     register,
@@ -79,11 +82,22 @@ export const CreateTicket: React.FC = () => {
   }
 
   const onSubmit = async (data: TicketForm) => {
-    // Convert attachments to array of strings before sending
-    const ticketData = {
+    let ticketData = {
       ...data,
       attachments: data.attachments.map((a) => a.value),
     };
+    if (categoryValue === 'other' && customCategory.trim()) {
+      ticketData = {
+        ...ticketData,
+        category: 'other',
+        customCategory: customCategory.trim(),
+      };
+    } else {
+      ticketData = {
+        ...ticketData,
+        customCategory: '',
+      };
+    }
     try {
       await createTicket(ticketData);
       toast.success('Ticket created successfully!');
@@ -135,11 +149,33 @@ export const CreateTicket: React.FC = () => {
               error={errors.title?.message}
             />
 
-            <Input
-              {...register('category')}
-              label="Category"
-              placeholder="e.g., Technical, Billing, General"
-            />
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">Category</label>
+              <select
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={categoryValue}
+                {...register('category')}
+                onChange={e => {
+                  setCategoryValue(e.target.value);
+                  if (e.target.value !== 'other') setCustomCategory('');
+                }}
+              >
+                <option value="">Select category</option>
+                <option value="billing">Billing</option>
+                <option value="tech">Technical</option>
+                <option value="shipping">Shipping</option>
+                <option value="other">Other</option>
+              </select>
+              {categoryValue === 'other' && (
+                <input
+                  type="text"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mt-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Please specify category"
+                  value={customCategory}
+                  onChange={e => setCustomCategory(e.target.value)}
+                />
+              )}
+            </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium text-gray-700">
