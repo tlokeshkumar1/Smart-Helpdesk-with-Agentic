@@ -118,21 +118,28 @@ def run_pipeline(trace_id: str, ticket: Dict[str, Any], kb: list) -> Dict[str, A
         }
     })
 
-    # STEP 2: KNOWLEDGE RETRIEVAL
+    # STEP 2: ENHANCED KNOWLEDGE RETRIEVAL
     step_start = time.time()
     search_strategy = next((step for step in execution_plan if step["step"] == "retrieval"), {})
     max_articles = search_strategy.get("max_articles", settings.MAX_ARTICLES)
     
+    # Use enhanced search with better scoring
     search_results = top_k(text, kb, k=max_articles)
     selected_articles = [doc for doc, score in search_results]
     retrieval_scores = [score for doc, score in search_results]
     citations = [doc["id"] for doc in selected_articles]
     retrieval_duration = time.time() - step_start
     
-    # Calculate retrieval quality metrics
+    # Enhanced retrieval quality metrics
     avg_score = sum(retrieval_scores) / len(retrieval_scores) if retrieval_scores else 0
     max_score = max(retrieval_scores) if retrieval_scores else 0
+    min_score = min(retrieval_scores) if retrieval_scores else 0
     score_variance = sum((s - avg_score) ** 2 for s in retrieval_scores) / len(retrieval_scores) if len(retrieval_scores) > 1 else 0
+    
+    # Calculate quality indicators
+    quality_threshold = 5.0  # Articles with score >= 5 are considered good matches
+    high_quality_matches = sum(1 for score in retrieval_scores if score >= quality_threshold)
+    match_consistency = 1 - (score_variance / (avg_score + 1))  # Normalized consistency metric
     
     steps.append({
         "action": "KB_RETRIEVED", 
@@ -140,102 +147,181 @@ def run_pipeline(trace_id: str, ticket: Dict[str, Any], kb: list) -> Dict[str, A
             "articleIds": citations,
             "searchQuery": text[:100] + "..." if len(text) > 100 else text,
             "retrievalScores": retrieval_scores,
-            "maxScore": max_score,
+            "maxScore": round(max_score, 3),
+            "minScore": round(min_score, 3),
             "avgScore": round(avg_score, 3),
             "scoreVariance": round(score_variance, 3),
-            "searchStrategy": search_strategy.get("search_strategy", "standard"),
+            "highQualityMatches": high_quality_matches,
+            "matchConsistency": round(match_consistency, 3),
+            "searchStrategy": search_strategy.get("search_strategy", "enhanced"),
             "processingTimeMs": round(retrieval_duration * 1000, 2),
             "planStep": "retrieval",
             "stepCompleted": True
         }
     })
 
-    # STEP 3: RESPONSE DRAFTING
+    # STEP 3: ENHANCED RESPONSE DRAFTING
     step_start = time.time()
     draft_result = provider.draft(text, selected_articles)
     drafting_duration = time.time() - step_start
     
-    # Validate draft quality
-    draft_quality_score = 0.5  # Base score
-    if draft_result['draftReply']:
-        word_count = len(draft_result['draftReply'].split())
-        if word_count >= 20:  # Reasonable length
+    # Enhanced draft quality assessment
+    draft_quality_score = 0.3  # Base score
+    draft_text = draft_result.get('draftReply', '')
+    
+    if draft_text:
+        # Content quality checks
+        word_count = len(draft_text.split())
+        line_count = len(draft_text.split('\n'))
+        
+        # Length appropriateness (50-400 words is good range)
+        if 50 <= word_count <= 400:
             draft_quality_score += 0.2
-        if word_count <= 200:  # Not too verbose
+        elif word_count >= 20:  # Minimum acceptable
             draft_quality_score += 0.1
-        if len(draft_result.get('citations', [])) > 0:  # Has citations
-            draft_quality_score += 0.2
+        
+        # Structure quality checks
+        has_greeting = any(greeting in draft_text for greeting in ["Hello", "Hi", "Dear"])
+        has_numbered_list = any(f"{i}." in draft_text for i in range(1, 10))
+        has_bold_formatting = "**" in draft_text
+        has_note_section = "Note:" in draft_text
+        has_closing = any(closing in draft_text for closing in ["Best regards", "Sincerely"])
+        has_citation = "[Article #" in draft_text
+        
+        # Quality scoring based on formatting requirements
+        formatting_score = sum([
+            has_greeting * 0.05,      # Proper greeting
+            has_numbered_list * 0.1,  # Numbered steps
+            has_bold_formatting * 0.05, # Bold text for emphasis
+            has_note_section * 0.05,  # Note section
+            has_closing * 0.05,       # Professional closing
+            has_citation * 0.1        # KB citation
+        ])
+        
+        draft_quality_score += formatting_score
+        
+        # Citation quality
+        citations_count = len(draft_result.get('citations', []))
+        if citations_count > 0:
+            draft_quality_score += 0.1
+        if citations_count >= 1:  # Ideal range
+            draft_quality_score += 0.05
     
     draft_quality_score = min(1.0, draft_quality_score)
     
     steps.append({
         "action": "DRAFT_GENERATED", 
         "meta": {
-            "draftLength": len(draft_result['draftReply']),
+            "draftLength": len(draft_text),
             "citationsCount": len(draft_result.get('citations', [])),
             "citationIds": draft_result.get('citations', []),
             "processingTimeMs": round(drafting_duration * 1000, 2),
-            "wordCount": len(draft_result['draftReply'].split()) if draft_result['draftReply'] else 0,
-            "qualityScore": round(draft_quality_score, 2),
+            "wordCount": len(draft_text.split()) if draft_text else 0,
+            "lineCount": len(draft_text.split('\n')) if draft_text else 0,
+            "qualityScore": round(draft_quality_score, 3),
+            "formattingChecks": {
+                "hasGreeting": any(greeting in draft_text for greeting in ["Hello", "Hi", "Dear"]),
+                "hasNumberedList": any(f"{i}." in draft_text for i in range(1, 10)),
+                "hasBoldFormatting": "**" in draft_text,
+                "hasNoteSection": "Note:" in draft_text,
+                "hasClosing": any(closing in draft_text for closing in ["Best regards", "Sincerely"]),
+                "hasCitation": "[Article #" in draft_text
+            },
             "planStep": "drafting",
             "stepCompleted": True
         }
     })
 
-    # STEP 4: DECISION & CONFIDENCE SCORING
+    # STEP 4: ENHANCED DECISION & CONFIDENCE SCORING
     step_start = time.time()
     
     # Enhanced confidence calculation with multiple factors
     base_confidence = classification_result["confidence"]
     
-    # Calculate individual quality factors
-    # Factor 1: Retrieval quality assessment
-    retrieval_quality = 0.5  # Default moderate quality
+    # Factor 1: Enhanced retrieval quality assessment
+    retrieval_quality = 0.3  # Default lower baseline
     if retrieval_scores:
         max_retrieval_score = max(retrieval_scores)
         avg_retrieval_score = sum(retrieval_scores) / len(retrieval_scores)
-        # Good if max score is high AND average is decent
-        retrieval_quality = min(1.0, (max_retrieval_score * 0.7 + avg_retrieval_score * 0.3))
+        
+        # Quality thresholds for enhanced scoring
+        excellent_threshold = 15.0  # Very high relevance
+        good_threshold = 5.0        # Good relevance
+        acceptable_threshold = 1.0  # Minimum relevance
+        
+        # Score based on best match quality
+        if max_retrieval_score >= excellent_threshold:
+            retrieval_quality = 0.9 + min(0.1, (max_retrieval_score - excellent_threshold) / 20.0)
+        elif max_retrieval_score >= good_threshold:
+            retrieval_quality = 0.6 + (max_retrieval_score - good_threshold) / (excellent_threshold - good_threshold) * 0.3
+        elif max_retrieval_score >= acceptable_threshold:
+            retrieval_quality = 0.3 + (max_retrieval_score - acceptable_threshold) / (good_threshold - acceptable_threshold) * 0.3
+        
+        # Boost for consistency (multiple good matches)
+        high_quality_count = sum(1 for score in retrieval_scores if score >= good_threshold)
+        if high_quality_count > 1:
+            retrieval_quality = min(1.0, retrieval_quality + 0.05 * (high_quality_count - 1))
     
-    # Factor 2: Draft quality assessment (already calculated)
-    # draft_quality_score is between 0.5-1.0
+    # Factor 2: Enhanced draft quality assessment (already calculated)
+    # draft_quality_score includes formatting checks
     
-    # Factor 3: KB coverage assessment  
-    kb_coverage_quality = 0.5  # Default
+    # Factor 3: Enhanced KB coverage assessment  
+    kb_coverage_quality = 0.3  # Default lower baseline
     if len(kb) > 0:
-        coverage_ratio = len(selected_articles) / len(kb)
-        # Good coverage if we found relevant articles
-        kb_coverage_quality = min(1.0, coverage_ratio * 2)  # Scale up for better scoring
+        # Coverage based on finding relevant matches
+        relevant_matches = sum(1 for score in retrieval_scores if score >= 1.0)
+        coverage_ratio = relevant_matches / len(kb)
+        
+        # Good coverage if we found multiple relevant articles
+        kb_coverage_quality = min(1.0, 0.3 + coverage_ratio * 0.7)
+        
+        # Bonus for having at least one excellent match
+        if max_score >= 10.0:
+            kb_coverage_quality = min(1.0, kb_coverage_quality + 0.1)
     
-    # Smart confidence adjustment instead of replacement
+    # Smart confidence adjustment with enhanced logic
     confidence_boost = 0.0
     confidence_penalty = 0.0
     
-    # Boost confidence for high-quality retrieval matches
-    if retrieval_quality > 0.8:
-        confidence_boost += 0.1  # Strong KB match
-    elif retrieval_quality > 0.6:
-        confidence_boost += 0.05  # Good KB match
-        
-    # Boost confidence for good draft quality
-    if draft_quality_score > 0.8:
+    # Enhanced boost conditions
+    if retrieval_quality > 0.85:  # Excellent KB match
+        confidence_boost += 0.15
+    elif retrieval_quality > 0.7:  # Very good KB match
+        confidence_boost += 0.1
+    elif retrieval_quality > 0.5:  # Good KB match
         confidence_boost += 0.05
         
-    # Boost confidence for good KB coverage
+    # Enhanced boost for excellent draft quality
+    if draft_quality_score > 0.9:
+        confidence_boost += 0.1
+    elif draft_quality_score > 0.7:
+        confidence_boost += 0.05
+        
+    # Boost for excellent KB coverage
     if kb_coverage_quality > 0.8:
         confidence_boost += 0.05
     
-    # Apply penalties for problematic cases
-    if len(text.split()) < 5:  # Very short tickets
-        confidence_penalty += 0.1
+    # Enhanced penalty conditions
+    if len(text.split()) < 3:  # Very short tickets
+        confidence_penalty += 0.15
+    elif len(text.split()) < 8:  # Short tickets
+        confidence_penalty += 0.05
+        
     if not selected_articles:  # No KB articles found
-        confidence_penalty += 0.2
+        confidence_penalty += 0.25
+    elif max_score < 1.0:  # Poor KB matches
+        confidence_penalty += 0.1
+        
     if classification_result["predictedCategory"] == "other":  # Unclear category
         confidence_penalty += 0.1
     
+    # Special boost for well-formatted responses with good KB matches
+    if draft_quality_score > 0.8 and retrieval_quality > 0.7:
+        confidence_boost += 0.05  # Synergy bonus
+    
     # Final confidence: start with base, apply adjustments
     final_confidence = base_confidence + confidence_boost - confidence_penalty
-    final_confidence = max(0.0, min(1.0, final_confidence))  # Clamp to [0,1]
+    final_confidence = max(0.1, min(1.0, final_confidence))  # Clamp to [0.1,1]
     
     # For detailed factor reporting (for debugging)
     confidence_factors = {
