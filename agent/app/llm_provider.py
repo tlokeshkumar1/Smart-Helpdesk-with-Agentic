@@ -191,11 +191,10 @@ Reasoning: [brief explanation]"""
         Generate formatted customer support response using best KB match with strict formatting rules.
         Returns: { "draftReply": "...", "citations": ["<articleId>", "<articleId>"] }
         """
-        if settings.STUB_MODE:
-            # Enhanced stub mode with proper formatting
-            if not articles:
-                return {
-                    "draftReply": """Hello,
+        # Always use numbered steps from the KB article for the draft reply
+        if not articles:
+            return {
+                "draftReply": """Hello,
 
 Thank you for contacting our support team. We've received your inquiry and are reviewing it carefully.
 
@@ -204,157 +203,44 @@ Our team will respond within 24 hours with detailed assistance tailored to your 
 Please don't hesitate to reply if you have any additional questions in the meantime.
 
 Best regards,
-Customer Support Team""", 
-                    "citations": []
-                }
-            
-            # Use first article for formatted stub response
-            best_article = articles[0]
-            article_id = best_article.get('id', '1')
-            article_title = best_article.get('title', 'Support Guide')
-            
-            # Analyze ticket for context
-            text_lower = text.lower()
-            urgency_words = ["urgent", "critical", "immediately", "asap", "emergency"]
-            is_urgent = any(word in text_lower for word in urgency_words)
-            
-            # Create properly formatted response following strict rules
-            response_parts = [
-                "Hello,",
-                "",
-                f"Thank you for contacting our support team{' regarding your urgent request' if is_urgent else ''}.",
-                "",
-                "Based on our knowledge base, here are the steps to resolve your issue:",
-                "",
-                "1. **Log into your account** using your credentials",
-                "2. **Navigate to the appropriate section** as described in the documentation",
-                "3. **Follow the step-by-step instructions** provided in the guide",
-                "4. **Verify the changes** have been applied successfully",
-                "5. **Contact our support team** if you encounter any difficulties",
-                "",
-                f"Note: These steps are based on our comprehensive {article_title.lower()} documentation.",
-                "",
-                f"This information is based on [Article #{article_id}]. Please reply if you need further assistance!",
-                "",
-                "Best regards,",
-                "Customer Support Team"
-            ]
-            
-            return {
-                "draftReply": "\n".join(response_parts), 
-                "citations": [str(article_id)]
-            }
-            
-        
-        # Enhanced Gemini implementation for properly formatted responses
-        try:
-            if not articles:
-                return {
-                    "draftReply": """Hello,
-
-Thank you for contacting our support team. We've received your inquiry and will review it thoroughly.
-
-Our team will respond within 24 hours with detailed assistance tailored to your specific needs.
-
-Please don't hesitate to reply if you have any additional questions in the meantime.
-
-Best regards,
 Customer Support Team""",
-                    "citations": []
-                }
-            
-            # Get the best matching article for the template
-            best_article = articles[0]  # Already sorted by relevance from pipeline
-            kb_title = best_article.get('title', 'Support Article')
-            kb_body = best_article.get('body', best_article.get('content', ''))
-            kb_id = str(best_article.get('id', '1'))
-            
-            # Enhanced prompt with strict formatting requirements
-            prompt = f"""You are a professional customer support agent. Create a polished customer support draft response following these EXACT formatting rules:
-
-### STRICT FORMATTING REQUIREMENTS:
-1. Start with a friendly greeting ("Hello," or "Hi [Name],")
-2. Acknowledge the customer's request in the second paragraph
-3. Write instructions as ONE CLEAN NUMBERED LIST (1, 2, 3, etc.)
-4. Do NOT repeat the subject/topic before the steps - go directly to the numbered list
-5. Include ALL relevant steps from the KB article (do not skip any)
-6. Use **bold** for important UI actions, buttons, or key terms
-7. Add a "Note:" section at the end with helpful tips from the KB
-8. Close with article reference in format [Article #{kb_id}] and encourage replies
-9. End with professional signature
-
-### CUSTOMER REQUEST:
-{text}
-
-### KNOWLEDGE BASE ARTICLE TO USE:
-Title: {kb_title}
-Content: {kb_body}
-Article ID: {kb_id}
-
-### EXAMPLE FORMAT:
-Hello,
-
-Thank you for contacting us about [acknowledge their request].
-
-Here are the steps to resolve this:
-
-1. **Action step one** with specific instructions
-2. **Action step two** with clear guidance  
-3. **Action step three** as detailed in our guide
-4. **Final verification step** to ensure success
-
-Note: [Include any important tips or warnings from the KB article]
-
-This solution is based on [Article #{kb_id}]. Please reply if you need further assistance!
-
-Best regards,
-Customer Support Team
-
-### YOUR RESPONSE:"""
-
-            model = genai.GenerativeModel(settings.MODEL)
-            response = model.generate_content(prompt)
-            response_text = response.text.strip()
-            
-            # Post-process the response to ensure proper formatting
-            response_text = self._ensure_proper_formatting(response_text, kb_id, text)
-            
-            # Extract citations
-            citations = self._extract_citations(response_text, articles)
-            
-            return {
-                "draftReply": response_text,
-                "citations": citations
+                "citations": []
             }
-            
-        except Exception as e:
-            # Enhanced fallback template with proper formatting
-            best_article = articles[0] if articles else None
-            article_id = str(best_article.get('id', '1')) if best_article else '1'
-            article_title = best_article.get('title', 'our knowledge base') if best_article else 'our knowledge base'
-            
-            fallback_response = f"""Hello,
 
-Thank you for contacting our support team regarding your inquiry.
+        best_article = articles[0]
+        article_id = best_article.get('id', '1')
+        article_title = best_article.get('title', 'Support Guide')
+        kb_body = best_article.get('body', best_article.get('content', ''))
 
-Based on {article_title}, here are the recommended steps:
+        # Extract only numbered steps from the KB article
+        import re
+        numbered_steps = re.findall(r'^[0-9]+\.\s.*', kb_body, re.MULTILINE)
+        if numbered_steps:
+            steps_text = '\n'.join(numbered_steps)
+        else:
+            steps_text = kb_body.strip()
 
-1. **Review the relevant documentation** in your account settings
-2. **Follow the step-by-step process** as outlined in our guide
-3. **Verify each step** is completed successfully before proceeding
-4. **Contact our support team** if you encounter any issues during the process
+        response_parts = [
+            "Hello,",
+            "",
+            "Thank you for contacting our support team.",
+            "",
+            "Based on our knowledge base, here are the steps to resolve your issue:",
+            "",
+            steps_text,
+            "",
+            f"Note: These steps are based on our comprehensive {article_title.lower()} documentation.",
+            "",
+            f"This information is based on [Article #{article_id}]. Please reply if you need further assistance!",
+            "",
+            "Best regards,",
+            "Customer Support Team"
+        ]
 
-Note: These instructions are based on our standard resolution procedures.
-
-This information is from [Article #{article_id}]. Please reply if you need further assistance!
-
-Best regards,
-Customer Support Team"""
-            
-            return {
-                "draftReply": fallback_response,
-                "citations": [str(article_id)]
-            }
+        return {
+            "draftReply": '\n'.join(response_parts),
+            "citations": [str(article_id)]
+        }
     
     def _ensure_proper_formatting(self, response_text: str, kb_id: str, original_request: str) -> str:
         """Ensure the response follows the strict formatting rules"""

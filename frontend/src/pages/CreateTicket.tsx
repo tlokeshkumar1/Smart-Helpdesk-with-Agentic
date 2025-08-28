@@ -15,7 +15,7 @@ const ticketSchema = z.object({
   title: z.string().min(1, 'Title is required'),
   description: z.string().min(1, 'Description is required'),
   category: z.string().optional(),
-  attachments: z.array(z.string().url('Please enter valid URLs')).default([]),
+  attachments: z.array(z.object({ value: z.string().url('Please enter valid URLs') })).min(0),
 });
 
 type TicketForm = z.infer<typeof ticketSchema>;
@@ -34,13 +34,16 @@ export const CreateTicket: React.FC = () => {
   } = useForm<TicketForm>({
     resolver: zodResolver(ticketSchema),
     defaultValues: {
+      title: '',
+      description: '',
+      category: '',
       attachments: [],
-    }
+    },
   });
 
   const { fields, append, remove } = useFieldArray({
     control,
-    name: 'attachments'
+    name: 'attachments',
   });
 
   // If user is not a 'user' role, show access denied
@@ -76,8 +79,13 @@ export const CreateTicket: React.FC = () => {
   }
 
   const onSubmit = async (data: TicketForm) => {
+    // Convert attachments to array of strings before sending
+    const ticketData = {
+      ...data,
+      attachments: data.attachments.map((a) => a.value),
+    };
     try {
-      await createTicket(data);
+      await createTicket(ticketData);
       toast.success('Ticket created successfully!');
       navigate('/tickets');
     } catch (error: unknown) {
@@ -92,7 +100,7 @@ export const CreateTicket: React.FC = () => {
     if (newAttachmentUrl.trim()) {
       try {
         new URL(newAttachmentUrl);
-        append(newAttachmentUrl);
+        append({ value: newAttachmentUrl });
         setNewAttachmentUrl('');
       } catch {
         toast.error('Please enter a valid URL');
@@ -155,7 +163,7 @@ export const CreateTicket: React.FC = () => {
                 {fields.map((field, index) => (
                   <div key={field.id} className="flex items-center space-x-2">
                     <Input
-                      {...register(`attachments.${index}` as const)}
+                      {...register(`attachments.${index}.value` as const)}
                       placeholder="https://example.com/file.pdf"
                       className="flex-1"
                     />
