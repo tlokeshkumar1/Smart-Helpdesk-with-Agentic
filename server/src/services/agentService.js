@@ -156,50 +156,40 @@ export async function triageTicket({ ticketId, traceId }) {
   // Update ticket with enhanced information
   ticket.category = resp.predictedCategory;
   ticket.agentSuggestionId = suggestion._id;
-  ticket.status = shouldAutoClose ? 'resolved' : 'waiting_human';
   
   if (shouldAutoClose) {
-    // Create automated reply when auto-closing - user sees this reply
-    const autoReply = await TicketReply.create({
-      ticketId: ticket._id,
-      content: resp.draftReply,
-      authorType: 'system',
-      isInternal: false,
-      citations: resp.citations || [],
-      agentSuggestionId: suggestion._id
-    });
+    ticket.status = 'resolved'; // High confidence tickets are marked as resolved
     
+    // Log auto-resolution (but no reply is sent automatically)
     await AuditLog.create({ 
       ticketId, 
       traceId, 
       actor: 'system', 
-      action: 'AUTO_RESOLVED_WITH_REPLY', 
-      meta: { 
-        suggestionId: String(suggestion._id),
-        replyId: String(autoReply._id),
+      action: 'TICKET_AUTO_RESOLVED_WITHOUT_REPLY', 
+      meta: {
+        reason: 'HIGH_CONFIDENCE_AUTO_RESOLVE',
         confidence: resp.confidence,
         threshold: cfg.confidenceThreshold,
-        category: resp.predictedCategory,
-        citationsUsed: resp.citations?.length || 0,
-        processingTimeMs: resp.modelInfo?.totalProcessingTimeMs || 0,
-        autoReplyCreated: true,
-        replyLength: resp.draftReply?.length || 0,
-        reason: 'CONFIDENCE_ABOVE_THRESHOLD'
+        autoCloseEnabled: cfg.autoCloseEnabled,
+        suggestionId: String(suggestion._id),
+        draftAvailable: !!resp.draftReply,
+        draftLength: resp.draftReply?.length || 0,
+        status: 'resolved',
+        note: 'Draft created but not sent - requires agent approval to send to user'
       }, 
       timestamp: new Date() 
     });
   } else {
-    const assignmentReason = resp.confidence < cfg.confidenceThreshold 
-      ? 'CONFIDENCE_BELOW_THRESHOLD' 
-      : 'AUTO_CLOSE_DISABLED';
-      
+    ticket.status = 'waiting_human'; // Low confidence requires human review
+    
+    // Log that human review is required
     await AuditLog.create({ 
       ticketId, 
       traceId, 
       actor: 'system', 
       action: 'REQUIRES_HUMAN_REVIEW', 
       meta: {
-        reason: assignmentReason,
+        reason: 'LOW_CONFIDENCE_NEEDS_REVIEW',
         confidence: resp.confidence,
         threshold: cfg.confidenceThreshold,
         autoCloseEnabled: cfg.autoCloseEnabled,
@@ -211,7 +201,6 @@ export async function triageTicket({ ticketId, traceId }) {
       timestamp: new Date() 
     });
   }
-  
   await ticket.save();
 
   // Final completion log

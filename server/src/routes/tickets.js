@@ -71,21 +71,8 @@ tickets.post('/', requireAuth, requireRole('user'), validate(createSchema), asyn
     // trigger agent triage inline with retry & timeout handled in service
     const triageResult = await triageTicket({ ticketId: ticket._id, traceId });
 
-    // If auto-resolved, send notification to user about the resolution
-    if (triageResult.autoClosed) {
-      await emitNotification({
-        userId: req.user._id.toString(),
-        type: 'ticket_auto_resolved',
-        message: `Your ticket "${ticket.title}" has been automatically resolved. Please check the reply for details.`,
-        ticketId: ticket._id.toString(),
-        metadata: { 
-          traceId, 
-          autoResolved: true,
-          confidence: triageResult.confidence,
-          hasReply: true
-        }
-      });
-    }
+    // Note: Auto-resolution has been disabled - all tickets now require agent approval
+    // Users will only see replies after agent approval
 
     const populated = await Ticket.findById(ticket._id).populate('agentSuggestionId').lean();
     
@@ -567,7 +554,6 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
     const traceId = newTraceId();
     const { action, editedReply, feedback, sendImmediately, closeTicket } = req.body;
     
-    let finalReply = ticket.agentSuggestionId.draftReply;
     let actionType = '';
 
     switch (action) {
@@ -575,8 +561,7 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         actionType = 'AGENT_DRAFT_ACCEPTED';
         break;
       case 'edit':
-        actionType = 'AGENT_DRAFT_EDITED';
-        finalReply = editedReply;
+        actionType = 'AGENT_DRAFT_EDITED_AND_ACCEPTED';  // Clarify that edit means acceptance
         break;
       case 'reject':
         actionType = 'AGENT_DRAFT_REJECTED';
@@ -593,13 +578,19 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
       // Update existing pending ticket
       console.log('Updating existing pending ticket:', pendingTicket._id);
       pendingTicket.action = action;
-      // Update PendingTicket status for accept action
-      if (action === 'accept') {
+      // Update the originalReply content if edited - overwrite the existing field
+      if (action === 'edit' && editedReply) {
+        pendingTicket.originalReply = editedReply;
+        console.log('Updated PendingTicket originalReply with edited content:', {
+          pendingTicketId: pendingTicket._id,
+          editedLength: editedReply.length
+        });
+      }
+      // Update PendingTicket status for accept and edit actions
+      if (action === 'accept' || action === 'edit') {
         pendingTicket.status = ['accepted', 'pending'];
       } else if (action === 'reject') {
         pendingTicket.status = ['rejected'];
-      } else {
-        pendingTicket.status = ['accepted'];
       }
       pendingTicket.willSendImmediately = sendImmediately;
       pendingTicket.willCloseTicket = closeTicket;
@@ -613,11 +604,11 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         agentId: req.user._id.toString(),
         agentName: req.user.name,
         action: action,
-        originalReply: ticket.agentSuggestionId.draftReply,
+        originalReply: (action === 'edit' && editedReply) ? editedReply : ticket.agentSuggestionId.draftReply,
         confidence: ticket.agentSuggestionId.confidence,
         willSendImmediately: sendImmediately,
         willCloseTicket: closeTicket,
-        status: action === 'accept' ? ['accepted', 'pending'] : (action === 'reject' ? ['rejected'] : ['accepted']),
+        status: (action === 'accept' || action === 'edit') ? ['accepted', 'pending'] : ['rejected'],
         traceId: traceId,
         assignedAt: new Date(),
         respondedAt: new Date()
@@ -635,7 +626,7 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
       meta: { 
         action,
         originalReply: ticket.agentSuggestionId.draftReply,
-        editedReply: action === 'edit' ? editedReply : undefined,
+        finalReply: pendingTicket.originalReply, // The actual reply content used (original or edited)
         feedback,
         agentId: req.user._id.toString(),
         agentName: req.user.name,
@@ -653,14 +644,26 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
     await pendingTicket.save();
     console.log('Updated pending ticket with audit log reference');
 
-    // Update AgentSuggestion to mark as reviewed
-    await AgentSuggestion.findByIdAndUpdate(ticket.agentSuggestionId._id, {
+    // Update AgentSuggestion to mark as reviewed and save edited draft if applicable
+    const agentSuggestionUpdate = {
       reviewed: true,
-      reviewResult: action,
+      reviewResult: (action === 'edit') ? 'accepted' : action,  // Treat edit as accepted
       reviewedBy: req.user._id,
       reviewedAt: new Date()
-    });
-    console.log('Marked agent suggestion as reviewed');
+    };
+    
+    // If the action is 'edit', update the draftReply with the edited content
+    if (action === 'edit' && editedReply) {
+      agentSuggestionUpdate.draftReply = editedReply;
+      console.log('Updating AgentSuggestion draftReply with edited content:', {
+        originalLength: ticket.agentSuggestionId.draftReply.length,
+        editedLength: editedReply.length,
+        suggestionId: ticket.agentSuggestionId._id
+      });
+    }
+    
+    await AgentSuggestion.findByIdAndUpdate(ticket.agentSuggestionId._id, agentSuggestionUpdate);
+    console.log('Marked agent suggestion as reviewed and updated draft if edited');
 
     // If accepting or editing, assign the ticket to the agent and update status
     if (action === 'accept' || action === 'edit') {
@@ -669,14 +672,13 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         ticket.status = 'triaged';
       }
       await ticket.save();
-    }
 
-    // If sending immediately, create reply and update ticket status
-    if (sendImmediately && (action === 'accept' || action === 'edit')) {
-      // Create the reply
+      // Always create a TicketReply when accepting or editing so users can see the approved draft
+      const replyContent = pendingTicket.originalReply;
+      
       const reply = await TicketReply.create({
         ticketId: ticket._id,
-        content: finalReply,
+        content: replyContent,
         author: req.user._id,
         authorType: 'agent',
         isInternal: false,
@@ -685,35 +687,38 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         traceId: traceId
       });
 
-      const newStatus = closeTicket ? 'resolved' : 'open';
-      const oldStatus = ticket.status;
-      ticket.status = newStatus;
-      await ticket.save();
+      // If sendImmediately is true, also close/resolve the ticket
+      if (sendImmediately) {
+        const newStatus = closeTicket ? 'resolved' : 'open';
+        const oldStatus = ticket.status;
+        ticket.status = newStatus;
+        await ticket.save();
 
-      // Only create audit log for status change, not for reply sent
-      if (closeTicket) {
-        await AuditLog.create({ 
-          ticketId: ticket._id, 
-          traceId, 
-          actor: 'agent', 
-          action: 'TICKET_RESOLVED_WITH_REPLY', 
-          meta: { 
-            replyId: String(reply._id),
-            reviewAction: action,
-            closed: closeTicket,
-            agentId: req.user._id,
-            agentName: req.user.name,
-            oldStatus,
-            newStatus,
-            citations: ticket.agentSuggestionId.articleIds?.length || 0
-          }, 
-          timestamp: new Date() 
-        });
+        // Log if ticket was closed/resolved
+        if (closeTicket) {
+          await AuditLog.create({ 
+            ticketId: ticket._id, 
+            traceId, 
+            actor: 'agent', 
+            action: 'TICKET_RESOLVED_WITH_REPLY', 
+            meta: { 
+              replyId: String(reply._id),
+              reviewAction: action,
+              closed: closeTicket,
+              agentId: req.user._id,
+              agentName: req.user.name,
+              oldStatus,
+              newStatus,
+              citations: ticket.agentSuggestionId.articleIds?.length || 0
+            }, 
+            timestamp: new Date() 
+          });
+        }
       }
 
-      // Send notification to ticket creator
-      const notificationType = closeTicket ? 'ticket_resolved' : 'ticket_replied';
-      const message = closeTicket 
+      // Send notification to ticket creator about the reply
+      const notificationType = (sendImmediately && closeTicket) ? 'ticket_resolved' : 'ticket_replied';
+      const message = (sendImmediately && closeTicket)
         ? `Your ticket "${ticket.title}" has been resolved.`
         : `You have a new reply on your ticket "${ticket.title}".`;
 
@@ -725,10 +730,11 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         metadata: { 
           traceId, 
           agentId: req.user._id.toString(),
-          oldStatus,
-          newStatus,
+          replyId: String(reply._id),
           hasReply: true,
-          reviewAction: action
+          reviewAction: action,
+          sentImmediately: sendImmediately,
+          closed: sendImmediately && closeTicket
         }
       });
     }
@@ -755,7 +761,7 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
       traceId,
       reviewResult: {
         action,
-        finalReply,
+        finalReply: pendingTicket.originalReply, // Use the originalReply from PendingTicket (contains edited content if action was 'edit')
         sent: sendImmediately,
         status: updatedTicket.status
       }

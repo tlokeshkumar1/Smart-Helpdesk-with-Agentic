@@ -36,7 +36,7 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
         closeTicket,
         feedback: feedback.trim() || undefined 
       });
-      toast.success(sendImmediately ? 'Draft accepted and sent!' : 'Draft accepted');
+      toast.success('Draft accepted and reply sent to user!');
       resetForm();
     } catch (error) {
       console.error('Error accepting draft:', error);
@@ -51,18 +51,20 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
     }
 
     try {
+      // When saving after edit, send as 'edit' action with the edited content
+      // Backend will treat this as acceptance with edited content
       await onReview('edit', { 
         editedReply,
         sendImmediately,
         closeTicket,
         feedback: feedback.trim() || undefined 
       });
-      toast.success(sendImmediately ? 'Draft edited and sent!' : 'Draft edited');
+      toast.success('Draft edited and reply sent to user!');
       resetForm();
       setIsEditing(false);
     } catch (error) {
-      console.error('Error editing draft:', error);
-      toast.error('Failed to edit draft');
+      console.error('Error saving edited draft:', error);
+      toast.error('Failed to save edited draft');
     }
   };
 
@@ -173,7 +175,7 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
                 onChange={(e) => setSendImmediately(e.target.checked)}
                 className="rounded"
               />
-              Send immediately after review
+              Complete ticket workflow immediately
             </label>
           </div>
 
@@ -186,7 +188,7 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
                   onChange={(e) => setCloseTicket(e.target.checked)}
                   className="rounded"
                 />
-                Close ticket after sending
+                Mark ticket as resolved
               </label>
             </div>
           )}
@@ -211,54 +213,64 @@ export const AgentReview: React.FC<AgentReviewProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap gap-2">
+        <div className="space-y-3">
           {!isEditing ? (
             <>
-              <Button
-                onClick={handleAccept}
-                isLoading={isLoading}
-                className="flex items-center gap-2"
-              >
-                <Check className="h-4 w-4" />
-                Accept {sendImmediately && '& Send'}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setIsEditing(true)}
-                className="flex items-center gap-2"
-              >
-                <Edit className="h-4 w-4" />
-                Edit
-              </Button>
-              <Button
-                variant="danger"
-                onClick={handleReject}
-                isLoading={isLoading}
-                className="flex items-center gap-2"
-              >
-                <X className="h-4 w-4" />
-                Reject
-              </Button>
+              {/* Edit Button - Top */}
+              <div className="flex justify-center">
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsEditing(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Edit className="h-4 w-4" />
+                  Edit Draft
+                </Button>
+              </div>
+              
+              {/* Accept and Reject Buttons - Below */}
+              <div className="flex flex-wrap gap-2 justify-center">
+                <Button
+                  onClick={handleAccept}
+                  isLoading={isLoading}
+                  className="flex items-center gap-2"
+                >
+                  <Check className="h-4 w-4" />
+                  Accept & Send Reply
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleReject}
+                  isLoading={isLoading}
+                  className="flex items-center gap-2"
+                >
+                  <X className="h-4 w-4" />
+                  Reject
+                </Button>
+              </div>
             </>
           ) : (
             <>
-              <Button
-                onClick={handleEdit}
-                isLoading={isLoading}
-                className="flex items-center gap-2"
-              >
-                <Send className="h-4 w-4" />
-                Save {sendImmediately && '& Send'}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setIsEditing(false);
-                  setEditedReply(agentSuggestion.draftReply);
-                }}
-              >
-                Cancel
-              </Button>
+              {/* Save and Cancel buttons when editing */}
+              <div className="flex flex-wrap gap-2 justify-center">
+                <Button
+                  onClick={handleEdit}
+                  isLoading={isLoading}
+                  className="flex items-center gap-2"
+                >
+                  <Send className="h-4 w-4" />
+                  Save & Send Reply
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setIsEditing(false);
+                    setEditedReply(agentSuggestion.draftReply);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
             </>
           )}
         </div>

@@ -129,6 +129,7 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
       // Refresh the ticket after review
       await get().fetchTicket(id);
       await get().fetchAuditEvents(id);
+      await get().fetchReplies(id); // Refresh replies to show new agent reply
 
       return response.data;
     } catch (error) {

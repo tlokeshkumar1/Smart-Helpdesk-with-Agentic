@@ -89,6 +89,7 @@ export const TicketDetail: React.FC = () => {
     try {
       await reviewDraft(id, action, options);
       console.log(`Successfully ${action}ed draft for ticket ${id}`);
+      // No page refresh needed - the store updates will trigger React re-render
     } catch (error) {
       console.error(`Error ${action}ing draft:`, error);
       throw error;
@@ -289,8 +290,8 @@ export const TicketDetail: React.FC = () => {
         />
       )}
 
-      {/* Show review result if already reviewed */}
-      {agentSuggestion && agentSuggestion.reviewed && (
+      {/* Show review result only if reviewed AND rejected - Only for agents and admins */}
+      {agentSuggestion && agentSuggestion.reviewed && agentSuggestion.reviewResult === 'rejected' && (user?.role === 'agent' || isAdmin) && (
         <Card>
           <CardHeader>
             <CardTitle>AI Suggestion Review Result</CardTitle>
@@ -299,11 +300,8 @@ export const TicketDetail: React.FC = () => {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="font-medium">Status:</span>
-                <Badge variant={agentSuggestion.reviewResult === 'accepted' ? 'success' : 
-                              agentSuggestion.reviewResult === 'rejected' ? 'danger' : 'default'}>
-                  {agentSuggestion.reviewResult ? 
-                    agentSuggestion.reviewResult.charAt(0).toUpperCase() + agentSuggestion.reviewResult.slice(1) : 
-                    'Unknown'}
+                <Badge variant="danger">
+                  Rejected
                 </Badge>
               </div>
               {agentSuggestion.reviewedAt && (
@@ -360,46 +358,7 @@ export const TicketDetail: React.FC = () => {
         </Card>
       )}
 
-      {/* Resolved Ticket Actions */}
-      {user?.role === 'agent' && 
-       currentTicket.status === 'resolved' && 
-       currentTicket.assignee && 
-       currentTicket.assignee !== 'Unassigned' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Resolved Ticket Actions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <p className="text-sm text-gray-600">
-                This ticket has been resolved. Choose an action:
-              </p>
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  onClick={handleCloseTicket}
-                  variant="primary"
-                  className="flex items-center gap-2"
-                >
-                  <Check className="h-4 w-4" />
-                  Close Ticket
-                </Button>
-                <Button
-                  onClick={handleReopenTicket}
-                  variant="secondary"
-                  className="flex items-center gap-2"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Reopen for Review
-                </Button>
-              </div>
-              <p className="text-xs text-gray-500">
-                • <strong>Close Ticket:</strong> Mark as fully resolved and close to new replies<br/>
-                • <strong>Reopen for Review:</strong> Return to active status for further work
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+
 
       {/* Conversation Section */}
       {replies.length > 0 && (
@@ -499,6 +458,50 @@ export const TicketDetail: React.FC = () => {
                   Send Reply
                 </Button>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Ticket Actions for Agents - Available for all non-closed tickets */}
+      {user?.role === 'agent' && currentTicket.status !== 'closed' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Ticket Actions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Current Status: <Badge variant={statusColors[currentTicket.status as keyof typeof statusColors] || 'default'}>
+                  {currentTicket.status.charAt(0).toUpperCase() + currentTicket.status.slice(1).replace('_', ' ')}
+                </Badge>
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={handleCloseTicket}
+                  variant="primary"
+                  className="flex items-center gap-2"
+                >
+                  <Check className="h-4 w-4" />
+                  Close Ticket
+                </Button>
+                {currentTicket.status === 'resolved' && (
+                  <Button
+                    onClick={handleReopenTicket}
+                    variant="secondary"
+                    className="flex items-center gap-2"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Reopen for Review
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-gray-500">
+                • <strong>Close Ticket:</strong> Mark as fully resolved and close to new replies<br/>
+                {currentTicket.status === 'resolved' && '• '}
+                {currentTicket.status === 'resolved' && <strong>Reopen for Review:</strong>}
+                {currentTicket.status === 'resolved' && ' Return to active status for further work'}
+              </p>
             </div>
           </CardContent>
         </Card>

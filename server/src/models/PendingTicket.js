@@ -4,7 +4,7 @@ const schema = new mongoose.Schema({
   ticketId: { type: mongoose.Schema.Types.ObjectId, ref: 'Ticket', required: true, index: true },
   agentId: { type: String, required: true, index: true }, // Agent ID from the AI system
   agentName: { type: String, required: true },
-  action: { type: String, enum: ['accept', 'reject'], required: true },
+  action: { type: String, enum: ['accept', 'reject', 'edit'], required: true },
   originalReply: { type: String, required: true },
   confidence: { type: Number, required: true },
   willSendImmediately: { type: Boolean, default: false },
