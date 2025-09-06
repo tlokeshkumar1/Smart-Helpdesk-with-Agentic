@@ -9,7 +9,7 @@ const schema = new mongoose.Schema({
   confidence: { type: Number, required: true },
   willSendImmediately: { type: Boolean, default: false },
   willCloseTicket: { type: Boolean, default: false },
-  status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending', index: true },
+  status: { type: [String], enum: ['pending', 'accepted', 'rejected', 'closed'], default: ['pending'], index: true },
   traceId: { type: String, required: true, index: true },
   auditLogId: { type: mongoose.Schema.Types.ObjectId, ref: 'AuditLog', index: true },
   assignedAt: { type: Date, default: () => new Date() },

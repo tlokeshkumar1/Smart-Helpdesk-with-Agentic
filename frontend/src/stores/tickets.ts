@@ -145,7 +145,7 @@ export const useTicketsStore = create<TicketsState>((set, get) => ({
   },
 
   closeTicket: async (id: string, reason?: string) => {
-    await api.post(`/tickets/${id}/close`, { reason });
+  await api.post(`/tickets/${id}/close`, { close: true, reason });
     // Refresh the ticket after closing
     await get().fetchTicket(id);
     await get().fetchAuditEvents(id);

@@ -78,9 +78,9 @@ agent.get('/dashboard', requireAuth, requireRole('agent'), async (req, res, next
       }),
       
       // Count closed tickets by this agent (from audit logs)
-      AuditLog.countDocuments({
-        'meta.agentId': agentId,
-        action: { $in: ['TICKET_RESOLVED_WITH_REPLY', 'TICKET_CLOSED'] }
+      PendingTicket.countDocuments({
+        agentId: agentId,
+        status: { $all: ['accepted', 'closed'] }
       }),
       
       // Count pending tickets assigned to this agent
@@ -478,6 +478,7 @@ const agentResponseSchema = Joi.object({
 
 agent.post('/respond-to-draft', requireAuth, requireRole('agent'), validate(agentResponseSchema), async (req, res, next) => {
   try {
+
     const { 
       ticketId, 
       action, 
@@ -493,6 +494,14 @@ agent.post('/respond-to-draft', requireAuth, requireRole('agent'), validate(agen
     const ticket = await Ticket.findById(ticketId);
     if (!ticket) {
       return res.status(404).json({ message: 'Ticket not found' });
+    }
+
+    // Prevent multiple agents from accepting the same ticket
+    if (action === 'accept') {
+      const alreadyAccepted = await PendingTicket.findOne({ ticketId, status: 'accepted' });
+      if (alreadyAccepted) {
+        return res.status(409).json({ message: 'This ticket has already been accepted by another agent.' });
+      }
     }
 
     // Create audit log entry
@@ -515,7 +524,6 @@ agent.post('/respond-to-draft', requireAuth, requireRole('agent'), validate(agen
 
     // Create or update pending ticket record
     let pendingTicket = await PendingTicket.findOne({ ticketId, agentId });
-    
     if (!pendingTicket) {
       pendingTicket = await PendingTicket.create({
         ticketId,
@@ -526,24 +534,36 @@ agent.post('/respond-to-draft', requireAuth, requireRole('agent'), validate(agen
         confidence,
         willSendImmediately,
         willCloseTicket,
-        status: action === 'accept' ? 'accepted' : 'rejected',
+        status: action === 'accept' ? 'pending' : 'rejected',
         traceId,
         auditLogId: auditLog._id,
         respondedAt: new Date()
       });
     } else {
       pendingTicket.action = action;
-      pendingTicket.status = action === 'accept' ? 'accepted' : 'rejected';
+      // If accepted, set to 'pending' (awaiting closure); else 'rejected'
+      if (action === 'accept') {
+        pendingTicket.status = 'pending';
+      } else if (action === 'reject') {
+        pendingTicket.status = 'rejected';
+      }
       pendingTicket.respondedAt = new Date();
       pendingTicket.auditLogId = auditLog._id;
       await pendingTicket.save();
     }
 
-    // If accepted, assign the ticket to the agent
+    // Accept/reject logic
     if (action === 'accept') {
       ticket.assignee = req.user._id; // Assign to the current user (agent)
       ticket.status = 'triaged';
       await ticket.save();
+
+      // Always update PendingTicket status to 'pending' after accept
+      const updateResult = await PendingTicket.updateMany(
+        { ticketId: ticket._id, agentId: req.user._id },
+        { $set: { status: 'pending' } }
+      );
+      console.log('[PendingTicket] Set to pending:', updateResult);
 
       // Send notification
       await emitNotification({
@@ -562,6 +582,15 @@ agent.post('/respond-to-draft', requireAuth, requireRole('agent'), validate(agen
       // If rejected, keep ticket open for reassignment
       ticket.status = 'open';
       await ticket.save();
+    }
+
+    // If the ticket is now closed or resolved, update all related PendingTickets to 'closed'
+    if (['closed', 'resolved'].includes(ticket.status)) {
+      const closeResult = await PendingTicket.updateMany(
+        { ticketId: ticket._id },
+        { $set: { status: 'closed' } }
+      );
+      console.log('[PendingTicket] Set to closed:', closeResult);
     }
 
     res.json({

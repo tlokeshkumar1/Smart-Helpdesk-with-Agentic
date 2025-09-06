@@ -12,6 +12,12 @@ export const users = [
     role: "agent",
   },
   {
+    name: "Charlie Agent",
+    email: "agent1@example.com",
+    password: "agentStrongPassword123!",
+    role: "agent",
+  },
+  {
     name: "Uma User",
     email: "user@example.com",
     password: "userStrongPassword123!",

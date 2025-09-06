@@ -320,6 +320,14 @@ tickets.post('/:id/reply', requireAuth, requireRole('agent'), validate(replySche
     ticket.status = newStatus;
     await ticket.save();
 
+    // Update PendingTicket status when ticket is closed
+    if (req.body.close) {
+      await PendingTicket.updateMany(
+        { ticketId: ticket._id },
+        { $set: { status: ['accepted', 'closed'] } }
+      );
+    }
+
     // Log the appropriate action based on whether there was a reply and if closing
     let actionType = '';
     if (req.body.close && req.body.reply.trim()) {
@@ -585,7 +593,14 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
       // Update existing pending ticket
       console.log('Updating existing pending ticket:', pendingTicket._id);
       pendingTicket.action = action;
-      pendingTicket.status = action === 'reject' ? 'rejected' : 'accepted';
+      // Update PendingTicket status for accept action
+      if (action === 'accept') {
+        pendingTicket.status = ['accepted', 'pending'];
+      } else if (action === 'reject') {
+        pendingTicket.status = ['rejected'];
+      } else {
+        pendingTicket.status = ['accepted'];
+      }
       pendingTicket.willSendImmediately = sendImmediately;
       pendingTicket.willCloseTicket = closeTicket;
       pendingTicket.respondedAt = new Date();
@@ -602,7 +617,7 @@ tickets.post('/:id/review-draft', requireAuth, requireRole('agent'), validate(re
         confidence: ticket.agentSuggestionId.confidence,
         willSendImmediately: sendImmediately,
         willCloseTicket: closeTicket,
-        status: action === 'reject' ? 'rejected' : 'accepted',
+        status: action === 'accept' ? ['accepted', 'pending'] : (action === 'reject' ? ['rejected'] : ['accepted']),
         traceId: traceId,
         assignedAt: new Date(),
         respondedAt: new Date()
@@ -825,6 +840,12 @@ tickets.post('/:id/close', requireAuth, requireRole('agent'), validate(closeSche
     const oldStatus = ticket.status;
     ticket.status = 'closed';
     await ticket.save();
+
+    // Update PendingTicket status when ticket is closed
+    await PendingTicket.updateMany(
+      { ticketId: ticket._id },
+      { $set: { status: ['accepted', 'closed'] } }
+    );
 
     await AuditLog.create({ 
       ticketId: ticket._id, 

@@ -361,7 +361,10 @@ export const TicketDetail: React.FC = () => {
       )}
 
       {/* Resolved Ticket Actions */}
-      {user?.role === 'agent' && currentTicket.status === 'resolved' && (
+      {user?.role === 'agent' && 
+       currentTicket.status === 'resolved' && 
+       currentTicket.assignee && 
+       currentTicket.assignee !== 'Unassigned' && (
         <Card>
           <CardHeader>
             <CardTitle>Resolved Ticket Actions</CardTitle>
